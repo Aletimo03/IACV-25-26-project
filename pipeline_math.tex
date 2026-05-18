@@ -1,0 +1,629 @@
+% ============================================================
+%  IACV 2025/26 Project — Synthetic Pose Estimation Pipeline
+%  Mathematical Foundations of the Full Pipeline (steps 1-7)
+%  Ready to compile on Overleaf (pdfLaTeX).
+% ============================================================
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{bm}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black}
+
+% --- Notation shortcuts ---
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\SO}[1]{\mathrm{SO}(#1)}
+\newcommand{\so}[1]{\mathfrak{so}(#1)}
+\newcommand{\SE}[1]{\mathrm{SE}(#1)}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\skewmat}[1]{\left[ #1 \right]_{\times}}
+\newcommand{\Rgt}{\mathbf{R}_{\text{gt}}}
+\newcommand{\tgt}{\mathbf{t}_{\text{gt}}}
+\newcommand{\wgt}{\boldsymbol{\omega}_{\text{gt}}}
+\newcommand{\Pcam}{\mathbf{P}_{\text{cam}}}
+\newcommand{\Pmark}{\mathbf{P}_{\text{mk}}}
+\newcommand{\KK}{\mathbf{K}}
+\newcommand{\Hom}{\mathbf{H}}
+
+\title{Synthetic Pose Estimation Pipeline \\[0.3em]
+       \large Mathematical Foundations --- Steps 1 to 7}
+\author{IACV 2025/26 Project}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+
+% ============================================================
+\section{Overview and Notation}
+% ============================================================
+
+We synthesize the image a calibrated pinhole camera would observe of a
+known planar square marker placed at a known pose, then re-estimate the
+pose from the synthesized image points using our own implementation of
+\verb|SOLVEPNP_IPPE_SQUARE|. The full pipeline:
+
+\begin{enumerate}[label=\textbf{Step \arabic*.}, leftmargin=*]
+  \item Generate a 3D plane (the marker plane).
+  \item Define a square on that plane of side $L$.
+  \item Define a camera with known intrinsics $\KK$.
+  \item Choose a known marker pose $(\Rgt, \tgt)$ relative to the camera.
+  \item Project the four 3D corners into the image.
+  \item Re-estimate the pose with our IPPE\_SQUARE (and compare with OpenCV).
+  \item Compare the estimated pose with the ground truth.
+\end{enumerate}
+
+Steps 1--5 are pure forward simulation (no estimation, no noise). Step 6 is
+the actual pose-estimation algorithm. Step 7 quantifies how well the
+estimator recovered the chosen ground truth. The two experiments asked for
+in the brief (two-pose ambiguity sweep; Jacobian conditioning study) are
+\emph{after} this pipeline and are not covered in this document.
+
+\subsection*{Notation}
+\begin{itemize}[leftmargin=*]
+  \item Vectors in bold lowercase: $\mathbf{t}, \boldsymbol{\omega}$. Matrices in bold uppercase: $\mathbf{R}, \KK$.
+  \item Points carry a subscript naming their frame:
+        $\Pmark$ is in the marker frame, $\Pcam$ in the camera frame.
+  \item Pixel coordinates: $\mathbf{p} = (u, v)^\top$.
+  \item Coordinate frames are right-handed: in the camera frame, $X$ points right,
+        $Y$ points down, $Z$ points into the scene.
+\end{itemize}
+
+% ============================================================
+\section{Step 1 --- The 3D Marker Plane}
+% ============================================================
+
+The marker is a flat object, so the four corners are coplanar. We attach a
+coordinate frame to the marker (the \emph{marker frame}) with the plane
+chosen as $Z = 0$:
+\begin{equation}
+  \text{marker plane} \;=\; \{\, (X, Y, 0) \,:\, X, Y \in \R \,\}.
+\end{equation}
+The origin is placed at the geometric center of the future square. The
+$X$ axis points right, $Y$ points up (in the plane), and $Z$ is the outward
+normal to the marker surface.
+
+\paragraph{Why $Z = 0$ matters.}
+A general projection of a 3D point requires the full $3\times 3$ rotation
+matrix. If the third coordinate is identically zero, the third column of
+$\mathbf{R}$ multiplies $0$ and drops out:
+\begin{equation}
+  \mathbf{R} \begin{pmatrix} X \\ Y \\ 0 \end{pmatrix}
+  \;=\; X \mathbf{r}_1 + Y \mathbf{r}_2,
+\end{equation}
+where $\mathbf{r}_1, \mathbf{r}_2$ are the first two columns of $\mathbf{R}$. As we
+will see in Step~6, this collapse is the structural reason a single
+$3\times 3$ matrix --- a \emph{homography} --- captures all the geometry.
+
+% ============================================================
+\section{Step 2 --- The Square on the Plane}
+% ============================================================
+
+On the plane $Z = 0$ we place a square of side $L$, centered at the marker
+origin and axis-aligned to the marker frame. The four corner coordinates,
+in the order used by OpenCV's \verb|SOLVEPNP_IPPE_SQUARE|, are
+\begin{equation}
+  \Pmark^{(0)} = \begin{pmatrix} -L/2 \\ +L/2 \\ 0 \end{pmatrix}, \;
+  \Pmark^{(1)} = \begin{pmatrix} +L/2 \\ +L/2 \\ 0 \end{pmatrix}, \;
+  \Pmark^{(2)} = \begin{pmatrix} +L/2 \\ -L/2 \\ 0 \end{pmatrix}, \;
+  \Pmark^{(3)} = \begin{pmatrix} -L/2 \\ -L/2 \\ 0 \end{pmatrix}.
+\end{equation}
+The parenthesized superscript is the corner index; the subscript ``mk''
+indicates the marker frame.
+
+\paragraph{Corner ordering matters.}
+Pose estimators consume \emph{pairs} of corresponding 3D and 2D corners.
+The order of the 3D list must match the order of the 2D observations,
+otherwise the correspondences are scrambled and the algorithm finds the
+wrong pose (or fails). The order above (counter-clockwise starting at
+top-left, viewed from $+Z$) is the convention shared by OpenCV's ArUco
+detector and \verb|SOLVEPNP_IPPE_SQUARE|.
+
+% ============================================================
+\section{Step 3 --- The Pinhole Camera}
+% ============================================================
+
+\subsection{Geometric model}
+
+A pinhole camera maps points in the camera frame to points on a 2D image.
+The camera origin is at the world origin; the image plane sits at $Z = f$,
+where $f$ is the focal length. By similar triangles, a 3D point
+$\Pcam = (X, Y, Z)^\top$ projects to
+\begin{equation}
+  x = f\cdot\frac{X}{Z}, \qquad y = f\cdot\frac{Y}{Z}.
+  \label{eq:similar-triangles}
+\end{equation}
+The division by $Z$ is the \emph{perspective divide}: it is the only
+non-linearity in the model and is responsible for foreshortening (farther
+objects look smaller).
+
+\subsection{The intrinsic matrix \texorpdfstring{$\KK$}{K}}
+
+Real images are measured in pixels. The focal length is encoded as
+$f_x, f_y$ (in pixels, possibly different along the two axes if the sensor
+elements are not square), and the optical axis hits the image at the
+\emph{principal point} $(c_x, c_y)$. The pixel coordinates are
+\begin{equation}
+  u = f_x \cdot \frac{X}{Z} + c_x, \qquad
+  v = f_y \cdot \frac{Y}{Z} + c_y.
+  \label{eq:pixel-projection}
+\end{equation}
+Collected into a matrix:
+\begin{equation}
+  \boxed{\quad
+    \KK \;=\; \begin{pmatrix} f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{pmatrix}
+  \quad}
+\end{equation}
+so that the projection has the compact homogeneous form
+\begin{equation}
+  \tilde{\mathbf{p}} \;=\; \KK\,\Pcam,
+  \qquad
+  \mathbf{p} \;=\; \begin{pmatrix} \tilde p_1/\tilde p_3 \\ \tilde p_2/\tilde p_3 \end{pmatrix}.
+\end{equation}
+First line: a linear matrix product. Second line: the perspective divide.
+
+\subsection{Normalized image coordinates}
+
+Apply $\KK^{-1}$ to a pixel $\mathbf{p}$:
+\begin{equation}
+  \begin{pmatrix} x_n \\ y_n \\ 1 \end{pmatrix}
+  \;=\; \KK^{-1}
+  \begin{pmatrix} u \\ v \\ 1 \end{pmatrix}
+  \;=\;
+  \begin{pmatrix} (u - c_x)/f_x \\ (v - c_y)/f_y \\ 1 \end{pmatrix}.
+\end{equation}
+The pair $(x_n, y_n)$ are the \emph{normalized image coordinates}: the
+location where the ray through pixel $\mathbf{p}$ crosses the plane
+$Z = 1$ in camera space. They are dimensionless (no pixels, no focal
+length) and encode pure ray directions. Pose-estimation algorithms (Step~6)
+work in this representation so that the camera-specific quantities $\KK$
+do not contaminate the geometric reasoning.
+
+% ============================================================
+\section{Step 4 --- Ground-Truth Pose}
+% ============================================================
+
+A point in the marker frame is brought into the camera frame by a
+rigid-body transform:
+\begin{equation}
+  \boxed{\quad \Pcam \;=\; \mathbf{R}\,\Pmark + \mathbf{t} \quad}
+  \label{eq:rigid-transform}
+\end{equation}
+with $\mathbf{R} \in \SO{3}$ and $\mathbf{t} \in \R^3$. The pair
+$(\mathbf{R}, \mathbf{t})$ is an element of the Special Euclidean group
+$\SE{3}$, and is what we mean by \emph{pose}.
+
+\subsection{The rotation group \texorpdfstring{$\SO{3}$}{SO(3)}}
+
+A $3\times 3$ matrix $\mathbf{R}$ is a rotation if and only if
+\begin{equation}
+  \mathbf{R}^\top \mathbf{R} \;=\; \mathbf{I},
+  \qquad
+  \det(\mathbf{R}) \;=\; +1.
+  \label{eq:so3-constraints}
+\end{equation}
+The first condition (orthonormal columns) preserves lengths and angles; the
+second excludes reflections, which would flip a right-handed frame into a
+left-handed one.
+
+\paragraph{Degrees of freedom.}
+A $3\times 3$ matrix has $9$ entries. The orthogonality condition
+$\mathbf{R}^\top \mathbf{R} = \mathbf{I}$ imposes $6$ independent constraints. That
+leaves \textbf{3 DOF} --- the minimum number of parameters needed to
+describe a rotation in 3D.
+
+\subsection{Representation 1: Euler angles}
+
+Decompose any rotation as three elementary rotations around the coordinate
+axes. The \emph{intrinsic xyz} convention used in our code is
+\begin{equation}
+  \mathbf{R}(\alpha,\beta,\gamma) \;=\; \mathbf{R}_x(\alpha)\,\mathbf{R}_y(\beta)\,\mathbf{R}_z(\gamma),
+\end{equation}
+where each $\mathbf{R}_\bullet(\cdot)$ is a $3\times 3$ planar rotation, e.g.
+\begin{equation}
+  \mathbf{R}_x(\alpha) =
+  \begin{pmatrix} 1 & 0 & 0 \\ 0 & \cos\alpha & -\sin\alpha \\ 0 & \sin\alpha & \cos\alpha \end{pmatrix}.
+\end{equation}
+\textbf{Pros:} human-intuitive --- $(15^\circ, 10^\circ, 5^\circ)$ is easy to picture.\\
+\textbf{Cons:} suffer from \emph{gimbal lock} (a configuration where two
+axes align and one DOF is lost) and from non-unique decompositions. We use
+Euler angles only to \emph{specify} the ground-truth pose conveniently; we
+never use them for optimization.
+
+\subsection{Representation 2: Axis--angle (rotation vector)}
+
+Euler's rotation theorem states that every $\mathbf{R} \in \SO{3}$ is a
+rotation by some angle $\theta$ around some unit axis $\hat{\mathbf{n}}$. Combine
+these into a single 3-vector
+\begin{equation}
+  \boxed{\quad
+    \boldsymbol{\omega} \;=\; \theta\,\hat{\mathbf{n}} \;\in\; \R^3
+  \quad}
+  \label{eq:axis-angle}
+\end{equation}
+called the \emph{rotation vector} or \emph{axis--angle vector}. Its
+direction is the rotation axis, its magnitude is the rotation angle:
+\begin{equation}
+  \theta = \norm{\boldsymbol{\omega}}, \qquad
+  \hat{\mathbf{n}} = \boldsymbol{\omega}/\norm{\boldsymbol{\omega}}.
+\end{equation}
+This minimal 3-parameter form is the \textbf{Lie algebra} $\so{3}$ of the
+rotation group $\SO{3}$.
+
+\subsection{The Rodrigues formula (exponential map)}
+
+The map from a rotation vector $\boldsymbol{\omega}$ to a rotation matrix
+$\mathbf{R}$ is given by the \emph{Rodrigues formula}:
+\begin{equation}
+  \boxed{\quad
+    \mathbf{R}(\boldsymbol{\omega}) \;=\; \mathbf{I}
+      + \sin\theta\,\skewmat{\hat{\mathbf{n}}}
+      + (1 - \cos\theta)\,\skewmat{\hat{\mathbf{n}}}^2
+  \quad}
+  \label{eq:rodrigues}
+\end{equation}
+where $\theta = \norm{\boldsymbol{\omega}}$, $\hat{\mathbf{n}} = \boldsymbol{\omega}/\theta$, and
+$\skewmat{\cdot}$ is the \emph{skew-symmetric matrix} built from a 3-vector:
+\begin{equation}
+  \skewmat{\mathbf{v}} \;=\;
+  \begin{pmatrix}
+    0 & -v_3 & v_2 \\
+    v_3 & 0 & -v_1 \\
+    -v_2 & v_1 & 0
+  \end{pmatrix},
+  \qquad
+  \skewmat{\mathbf{v}}\,\mathbf{u} \;=\; \mathbf{v} \times \mathbf{u}.
+\end{equation}
+
+\paragraph{Intuition.} Read \eqref{eq:rodrigues} as ``start from the
+identity (no rotation), add a first-order term proportional to
+$\sin\theta$, and a second-order correction''. It is the closed form of the
+matrix exponential
+\[
+  \mathbf{R}(\boldsymbol{\omega}) \;=\; \exp\!\big(\skewmat{\boldsymbol{\omega}}\big)
+  \;=\; \sum_{k=0}^{\infty} \frac{\skewmat{\boldsymbol{\omega}}^k}{k!},
+\]
+which collapses to a finite sum because $\skewmat{\hat{\mathbf{n}}}^3 = -\skewmat{\hat{\mathbf{n}}}$.
+
+\paragraph{Inverse map.} Given $\mathbf{R}$, recover the rotation vector via
+\begin{equation}
+  \theta = \arccos\!\left(\frac{\mathrm{trace}(\mathbf{R}) - 1}{2}\right),
+  \quad
+  \skewmat{\hat{\mathbf{n}}} = \frac{\mathbf{R} - \mathbf{R}^\top}{2\sin\theta},
+  \quad
+  \boldsymbol{\omega} = \theta\,\hat{\mathbf{n}}.
+\end{equation}
+The \texttt{scipy.spatial.transform.Rotation} class exposes this as
+\verb|.as_rotvec()|.
+
+\subsection{Our concrete ground-truth pose}
+
+In the code we choose
+\begin{align}
+  \text{Euler (xyz, deg)} & : \quad (\alpha, \beta, \gamma) = (15,\,10,\,5) \\
+  \tgt & : \quad (0.05,\, 0.02,\, 0.50)^\top \;\text{m}
+\end{align}
+which yields
+\[
+  \Rgt \approx
+  \begin{pmatrix}
+    +0.9811 & -0.0394 & +0.1897 \\
+    +0.0858 & +0.9662 & -0.2432 \\
+    -0.1736 & +0.2549 & +0.9513
+  \end{pmatrix},
+  \qquad
+  \wgt \approx
+  \begin{pmatrix} 0.2534 \\ 0.1848 \\ 0.0637 \end{pmatrix} \text{rad}.
+\]
+Note $\norm{\wgt} \approx 18.33^\circ$, the total rotation angle. It is
+\emph{not} $15^\circ + 10^\circ + 5^\circ$ because Euler rotations do not
+compose by simple addition.
+
+% ============================================================
+\section{Step 5 --- Forward Projection}
+% ============================================================
+
+Steps 1--4 fix all the inputs. Step 5 chains them into the observed image
+points. For each marker corner $\Pmark^{(i)}$:
+\begin{equation}
+  \boxed{\quad
+    \mathbf{p}^{(i)}
+    \;=\;
+    \pi\!\Big(\, \KK\,(\,\Rgt \Pmark^{(i)} + \tgt\,) \,\Big)
+  \quad}
+  \label{eq:full-projection}
+\end{equation}
+where the projection $\pi:\R^3 \to \R^2$ is the perspective divide
+\begin{equation}
+  \pi\!\begin{pmatrix} \tilde x \\ \tilde y \\ \tilde z \end{pmatrix}
+  \;=\;
+  \begin{pmatrix} \tilde x / \tilde z \\ \tilde y / \tilde z \end{pmatrix}.
+\end{equation}
+
+\paragraph{In the code, Step 5 is split in two sub-steps:}
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Rigid transform.} $\Pcam^{(i)} \;=\; \Rgt \Pmark^{(i)} + \tgt$.
+        Brings each marker corner from the marker frame into the camera frame.
+  \item \textbf{Pinhole projection.} $\mathbf{p}^{(i)} \;=\; \pi(\KK\,\Pcam^{(i)})$.
+        Maps the camera-frame point to pixel coordinates via
+        \eqref{eq:pixel-projection}.
+\end{enumerate}
+
+\paragraph{Sanity checks at this point:}
+\begin{itemize}[leftmargin=*]
+  \item All $\Pcam^{(i)}$ have $Z > 0$ (in front of the camera --- \emph{cheirality}).
+  \item All $\mathbf{p}^{(i)}$ fall inside $[0, W) \times [0, H)$ (visible on the sensor).
+  \item The four $\mathbf{p}^{(i)}$ form a \emph{convex quadrilateral} that looks
+        like a perspective-warped square.
+\end{itemize}
+
+% ============================================================
+\section{Step 6 --- Pose Estimation with IPPE\_SQUARE}
+% ============================================================
+
+We now invert the projection: given $\KK$, the four marker corners
+$\Pmark^{(i)}$, and the four image points $\mathbf{p}^{(i)}$, recover
+$(\mathbf{R}, \mathbf{t})$. We follow the structure of OpenCV's
+\verb|SOLVEPNP_IPPE_SQUARE| (Collins \& Bartoli, IJCV 2014).
+
+\subsection{What IPPE\_SQUARE is}
+
+\textbf{IPPE} = \emph{Infinitesimal Plane-Based Pose Estimation}.
+For \emph{planar} markers, the projection from the marker plane to the
+image plane is a \textbf{homography} $\Hom$ (a $3\times 3$ matrix). IPPE
+exploits planarity to obtain a closed-form pose --- no iterative
+optimization. The \verb|_SQUARE| specialization exploits the additional
+fact that the marker is a \emph{centered, axis-aligned square}, which
+simplifies the homography step further.
+
+\textbf{Two solutions.} The planar pose problem has an inherent
+two-fold ambiguity: there exist (in general) two distinct poses
+$(\mathbf{R}_1, \mathbf{t}_1)$ and $(\mathbf{R}_2, \mathbf{t}_2)$ that project the same 3D
+square to image points indistinguishable up to noise. IPPE returns both,
+ranked by reprojection error.
+
+\subsection{The pipeline at a glance}
+
+\begin{center}
+\begin{tabular}{|c|l|}
+\hline
+\textbf{Block} & \textbf{Operation} \\
+\hline
+A & Normalize image points: $\mathbf{q}^{(i)} = \KK^{-1}\,\mathbf{p}^{(i)}$ \\
+B & Estimate homography $\Hom$ from $\{\Pmark^{(i)}_{XY}\} \to \{\mathbf{q}^{(i)}\}$ (DLT) \\
+C & Decompose $\Hom$ into two candidate poses $(\mathbf{R}, \mathbf{t})$ \\
+D & Project each $\mathbf{R}$ onto $\SO{3}$ (Procrustes via SVD) \\
+E & Rank the candidates by reprojection error \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsection{Block A --- Normalize image points}
+
+Apply $\KK^{-1}$ to each observed pixel:
+\begin{equation}
+  \mathbf{q}^{(i)} \;=\; \KK^{-1}\,\mathbf{p}^{(i)} \;\in\; \R^2.
+\end{equation}
+This removes $\KK$ from the rest of the pipeline. The homography we
+compute next will map the marker plane directly to the $Z = 1$ normalized
+plane, without any factor of $\KK$ in it.
+
+\subsection{Block B --- Homography estimation by DLT}
+
+For a planar point $\Pmark = (X, Y, 0)^\top$, the projection collapses to
+\begin{equation}
+  \tilde{\mathbf{q}} \;=\; [\mathbf{r}_1 \,|\, \mathbf{r}_2 \,|\, \mathbf{t}]
+  \begin{pmatrix} X \\ Y \\ 1 \end{pmatrix},
+\end{equation}
+so the $3\times 3$ matrix $\Hom \;=\; [\mathbf{r}_1\,|\,\mathbf{r}_2\,|\,\mathbf{t}]$
+(up to a global scale) is the \emph{homography} from the marker plane to
+the normalized image plane. With four correspondences
+$(X_i, Y_i) \leftrightarrow (x_n^{(i)}, y_n^{(i)})$ we estimate $\Hom$
+linearly via the \textbf{Direct Linear Transform (DLT)}.
+
+\paragraph{From homogeneous equality to linear equations.}
+Write the action of $\Hom$ in coordinates:
+\begin{equation}
+  \begin{pmatrix} \tilde u \\ \tilde v \\ \tilde w \end{pmatrix}
+  \;=\; \Hom \begin{pmatrix} X \\ Y \\ 1 \end{pmatrix},
+\end{equation}
+the observed normalized point is $(x_n, y_n) = (\tilde u/\tilde w,\,\tilde v/\tilde w)$.
+Cross-multiplying:
+\begin{align}
+  x_n\,\tilde w - \tilde u &= 0, \\
+  y_n\,\tilde w - \tilde v &= 0.
+\end{align}
+Substituting $\tilde u, \tilde v, \tilde w$ in terms of the entries of
+$\Hom = \{h_{ij}\}$ yields two linear equations \emph{per point} in the
+9 unknowns:
+\begin{equation}
+  \underbrace{
+  \begin{pmatrix}
+    -X & -Y & -1 &  0 &  0 & 0 & x_n X & x_n Y & x_n \\
+     0 &  0 &  0 & -X & -Y & -1 & y_n X & y_n Y & y_n
+  \end{pmatrix}}_{2\times 9 \text{ block of } \mathbf{A}_i}
+  \;
+  \underbrace{
+  \begin{pmatrix} h_{11} \\ h_{12} \\ \vdots \\ h_{33} \end{pmatrix}}_{\mathbf{h} \;\in\; \R^9}
+  \;=\; \mathbf{0}.
+\end{equation}
+
+\paragraph{Stacking four points.}
+With $N = 4$ correspondences, the system is $\mathbf{A}\,\mathbf{h} = \mathbf{0}$
+with $\mathbf{A} \in \R^{8 \times 9}$. The trivial solution $\mathbf{h} = \mathbf{0}$ is useless;
+the meaningful one is found by SVD:
+\begin{equation}
+  \mathbf{A} \;=\; \mathbf{U}\,\boldsymbol{\Sigma}\,\mathbf{V}^\top,
+  \qquad
+  \mathbf{h} \;=\; \text{last column of } \mathbf{V} \;=\; \text{last row of } \mathbf{V}^\top.
+\end{equation}
+This is the right singular vector corresponding to the smallest singular
+value, the choice that minimizes $\norm{\mathbf{A}\mathbf{h}}^2$ subject to
+$\norm{\mathbf{h}} = 1$ (Eckart--Young theorem). Reshape $\mathbf{h}$ into a
+$3 \times 3$ matrix to obtain $\Hom$.
+
+\subsection{Block C --- Decomposing \texorpdfstring{$\Hom$}{H} into pose}
+
+Because we normalized the image points in Block~A, the homography we
+computed satisfies
+\begin{equation}
+  \Hom \;=\; [\mathbf{r}_1 \,|\, \mathbf{r}_2 \,|\, \mathbf{t}] \qquad \text{(up to a global scale } s\text{)}.
+\end{equation}
+A rotation matrix has unit-norm columns, so the scale is fixed by
+$\norm{\mathbf{r}_1} = 1$:
+\begin{equation}
+  s \;=\; \norm{\Hom_{:,1}}, \qquad
+  \mathbf{r}_1 \;=\; \Hom_{:,1}/s, \quad
+  \mathbf{r}_2 \;=\; \Hom_{:,2}/s, \quad
+  \mathbf{t} \;=\; \Hom_{:,3}/s.
+\end{equation}
+The third rotation column is recovered via the cross product
+\begin{equation}
+  \mathbf{r}_3 \;=\; \mathbf{r}_1 \times \mathbf{r}_2,
+\end{equation}
+which automatically yields a right-handed orthogonal axis.
+
+\paragraph{The sign ambiguity (two solutions).}
+A homography is defined up to a non-zero scalar: $\Hom$ and $-\Hom$
+represent the same map between projective planes. Therefore both
+$+s$ and $-s$ produce valid decompositions, giving two candidate poses
+$(\mathbf{R}^+, \mathbf{t}^+)$ and $(\mathbf{R}^-, \mathbf{t}^-)$. This sign ambiguity is the
+algebraic origin of the two-pose ambiguity discussed earlier.
+
+\paragraph{Cheirality filter.}
+For each candidate we transform the 3D corners and discard any pose with
+$Z \leq 0$ for any corner (marker would be behind the camera --- physically
+impossible).
+
+\subsection{Block D --- Orthogonalize \texorpdfstring{$\mathbf{R}$}{R} via SVD Procrustes}
+
+The matrix $[\mathbf{r}_1\,|\,\mathbf{r}_2\,|\,\mathbf{r}_3]$ assembled in Block~C is
+\emph{approximately} a rotation matrix but not exactly: noise and numerical
+errors leave the columns slightly non-orthonormal. We project to the
+nearest matrix in $\SO{3}$ using the \textbf{orthogonal Procrustes}
+closed-form solution.
+
+\paragraph{Theorem (orthogonal Procrustes).}
+Given any $\mathbf{M} \in \R^{3 \times 3}$, the rotation matrix
+$\mathbf{R} \in \SO{3}$ closest to $\mathbf{M}$ in the Frobenius norm is
+\begin{equation}
+  \mathbf{M} \;=\; \mathbf{U}\,\boldsymbol{\Sigma}\,\mathbf{V}^\top
+  \;\;\Longrightarrow\;\;
+  \mathbf{R} \;=\; \mathbf{U}\,\mathbf{V}^\top.
+\end{equation}
+The singular values $\boldsymbol{\Sigma}$ are discarded; only the orthonormal
+frame survives.
+
+\paragraph{The reflection fix.}
+If $\det(\mathbf{U}\mathbf{V}^\top) = -1$ the result is a reflection, not a
+rotation. Flip the sign of the last column of $\mathbf{U}$ to recover
+$\det = +1$ without leaving the optimal subspace:
+\begin{equation}
+  \text{if } \det(\mathbf{U}\mathbf{V}^\top) < 0: \;
+  \mathbf{U}_{:,3} \leftarrow -\mathbf{U}_{:,3}, \;
+  \mathbf{R} \leftarrow \mathbf{U}\,\mathbf{V}^\top.
+\end{equation}
+
+\subsection{Block E --- Rank candidates by reprojection error}
+
+For each surviving candidate $(\mathbf{R}, \mathbf{t})$, compute the
+\emph{reprojection error}
+\begin{equation}
+  E(\mathbf{R}, \mathbf{t})
+  \;=\; \frac{1}{N}\sum_{i=1}^{N} \norm{\,\mathbf{p}^{(i)} - \pi(\KK(\mathbf{R}\Pmark^{(i)} + \mathbf{t}))\,}.
+\end{equation}
+The candidate with the smaller $E$ is reported as Solution~1 (most likely
+true pose), the other as Solution~2 (the ambiguity twin). In the
+noiseless case Solution~1 has $E = 0$ exactly.
+
+\subsection{Relationship to OpenCV's implementation}
+
+OpenCV's actual IPPE\_SQUARE follows a slightly different route:
+it builds the homography using a closed-form formula specific to the
+centered square (instead of generic DLT), then extracts the rotation from
+the \emph{Jacobian of the homography at the marker center} via an
+intermediate frame $\mathbf{R}_v$. It also applies a final iterative
+refinement (Levenberg--Marquardt). Our DLT + decomposition + Procrustes
+route produces \textbf{mathematically equivalent results in the noiseless
+case}, and differs only by a small refinement under noise. The conceptual
+flow (normalize $\to$ homography $\to$ two-fold pose decomposition $\to$
+rank by reprojection error) is identical.
+
+% ============================================================
+\section{Step 7 --- Comparison with Ground Truth}
+% ============================================================
+
+Given the estimated pose $(\hat{\mathbf{R}}, \hat{\mathbf{t}})$ and the ground-truth
+pose $(\Rgt, \tgt)$, we report three numbers.
+
+\subsection{Reprojection error}
+
+\begin{equation}
+  E(\hat{\mathbf{R}}, \hat{\mathbf{t}})
+  \;=\; \frac{1}{N}\sum_{i=1}^{N}
+  \norm{\,\mathbf{p}^{(i)} - \pi(\KK(\hat{\mathbf{R}}\Pmark^{(i)} + \hat{\mathbf{t}}))\,}
+  \quad\text{(pixels)}.
+\end{equation}
+Reported for each candidate solution returned by the estimator.
+
+\subsection{Translation error}
+
+The Euclidean distance between the estimated and true translations:
+\begin{equation}
+  e_t \;=\; \norm{\hat{\mathbf{t}} - \tgt} \quad\text{(meters)}.
+\end{equation}
+
+\subsection{Rotation error}
+
+The angular distance between $\hat{\mathbf{R}}$ and $\Rgt$ is read off the
+relative rotation $\mathbf{R}_{\text{err}} = \Rgt^\top\,\hat{\mathbf{R}}$. For any
+rotation matrix, the trace identity gives
+\begin{equation}
+  \mathrm{trace}(\mathbf{R}) \;=\; 1 + 2\cos\theta,
+\end{equation}
+so
+\begin{equation}
+  \boxed{\quad
+    e_R \;=\; \arccos\!\left(\frac{\mathrm{trace}(\Rgt^\top \hat{\mathbf{R}}) - 1}{2}\right)
+  \quad\text{(radians; convert to degrees as needed)}.
+  \quad}
+  \label{eq:rot-error}
+\end{equation}
+If $\hat{\mathbf{R}} = \Rgt$, then $\mathbf{R}_{\text{err}} = \mathbf{I}$, trace is $3$, and
+$e_R = 0$. The output lives in $[0, \pi]$ regardless of the axis of
+disagreement, giving a single intuitive ``how off is the rotation'' scalar.
+
+\paragraph{Numerical guard.}
+Floating-point round-off can push the argument of $\arccos$ slightly
+outside $[-1, 1]$, producing \verb|NaN|. The code clamps the argument
+to $[-1, 1]$ before the $\arccos$ call.
+
+% ============================================================
+\section*{Summary Table}
+% ============================================================
+
+\begin{center}
+\begin{tabular}{|c|l|l|}
+\hline
+\textbf{Step} & \textbf{What it produces} & \textbf{Code location} \\
+\hline
+1   & Marker plane ($Z=0$)                       & implicit in \texttt{marker.py} \\
+2   & Square corners $\Pmark^{(i)}$              & \texttt{square\_object\_points(L)} \\
+3   & Camera intrinsics $\KK$                    & \texttt{make\_default\_camera()} \\
+4   & Pose $(\Rgt, \tgt, \wgt)$                  & \texttt{make\_ground\_truth\_pose()} \\
+5a  & Camera-frame points $\Pcam^{(i)}$          & \texttt{transform\_points(...)} \\
+5b  & Image points $\mathbf{p}^{(i)}$            & \texttt{camera.project(...)} \\
+6   & Estimated pose $(\hat{\mathbf{R}}, \hat{\mathbf{t}})$ & \texttt{ippe\_square(...)} \\
+7   & Errors $E, e_t, e_R$                       & \texttt{pipeline.py} (reporting) \\
+\hline
+\end{tabular}
+\end{center}
+
+\end{document}

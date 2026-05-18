@@ -1,0 +1,35 @@
+# ── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtual environments ────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── JetBrains IDEs (PyCharm, IntelliJ, etc.) ────────────────────────────
+.idea/
+
+# ── VS Code ─────────────────────────────────────────────────────────────
+.vscode/
+
+# ── macOS / Windows / Linux noise ───────────────────────────────────────
+.DS_Store
+Thumbs.db
+*~
+
+# ── LaTeX build artifacts (if you compile pipeline_math.tex locally) ────
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
