@@ -1,5 +1,7 @@
 import numpy as np
 
+import config
+
 
 class Camera:
     """
@@ -113,12 +115,24 @@ class Camera:
         return pts_n[:, :2]                     # (N, 2)
 
 
-def make_default_camera(width: int = 640, height: int = 480) -> Camera:
+def make_camera(
+    fx: float = config.CAMERA_FX,
+    fy: float = config.CAMERA_FY,
+    cx: float = config.CAMERA_CX,
+    cy: float = config.CAMERA_CY,
+) -> Camera:
     """
-    A reasonable synthetic camera for a 640×480 image.
+    Factory for a pinhole Camera from its four intrinsic parameters.
 
-    fx = fy = 800 px corresponds roughly to a ~43° horizontal FOV —
-    typical for a moderate telephoto or close-range inspection setup.
-    Principal point placed at the image center.
+    Defaults come from config.py, so callers can simply write make_camera()
+    to get the configured camera, or override any parameter (useful for
+    viewpoint sweeps later).
+
+    Args:
+        fx, fy : focal lengths in pixels   (default: config.CAMERA_FX / FY)
+        cx, cy : principal point in pixels (default: config.CAMERA_CX / CY)
+
+    Returns:
+        Camera instance carrying the intrinsic matrix K.
     """
-    return Camera(fx=800.0, fy=800.0, cx=width / 2.0, cy=height / 2.0)
+    return Camera(fx=fx, fy=fy, cx=cx, cy=cy)

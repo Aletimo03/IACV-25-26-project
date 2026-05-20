@@ -22,8 +22,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 import config
-from camera import Camera, make_default_camera
-from marker import square_object_points, transform_points
+from camera import make_camera
+from marker import make_square_marker, transform_points
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ def make_ground_truth_pose(
         config.GT_TRANSLATION_X_M,
         config.GT_TRANSLATION_Y_M,
         config.GT_TRANSLATION_Z_M),
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Build a known camera-from-marker pose (R_gt, t_gt).
 
@@ -51,16 +51,6 @@ def make_ground_truth_pose(
         they are intuitive — humans can picture "15° tilt around X, 10°
         around Y, 5° around Z".  Internally we immediately convert to a
         3×3 rotation matrix for use in the projection chain.
-
-        We ALSO return the axis-angle vector ω ∈ ℝ³ (a.k.a. rotation
-        vector, a.k.a. so(3) Lie-algebra element). This is the
-        parameterization Luca asked us to use later for the Jacobian
-        analysis:
-            ω = θ · n̂,   ‖ω‖ = θ (rotation angle),   ω/‖ω‖ = n̂ (axis)
-            R = exp_so3(ω)   (Rodrigues formula)
-
-        Having ω alongside R from the very first step gets us used to
-        seeing the pose in its minimal 6-parameter form (t, ω).
 
     Translation:
         A reasonable inspection-distance scenario:
@@ -75,95 +65,67 @@ def make_ground_truth_pose(
     Returns:
         R_gt : (3, 3) ground-truth rotation matrix
         t_gt : (3,)   ground-truth translation vector (meters)
-        w_gt : (3,)   ground-truth axis-angle vector ω (radians)
     """
     rotation = Rotation.from_euler('xyz', euler_xyz_deg, degrees=True)
     R_gt = rotation.as_matrix()                  # (3, 3) rotation matrix
-    w_gt = rotation.as_rotvec()                  # (3,)   axis-angle (radians)
     t_gt = np.array(translation_m, dtype=np.float64)
-    return R_gt, t_gt, w_gt
+    return R_gt, t_gt
 
 
 # ──────────────────────────────────────────────────────────────────────────
 # Steps 1-5 orchestrator
 # ──────────────────────────────────────────────────────────────────────────
 
-def generate_scene(
-    marker_side_m: float = config.MARKER_SIDE_M,
-    image_width:   int   = config.IMAGE_WIDTH,
-    image_height:  int   = config.IMAGE_HEIGHT,
-    camera_fx:     float = config.CAMERA_FX,
-    camera_fy:     float = config.CAMERA_FY,
-    camera_cx:     float = config.CAMERA_CX,
-    camera_cy:     float = config.CAMERA_CY,
-    pose_euler_deg: tuple[float, float, float] = (
-        config.GT_ROTATION_AROUND_X_DEG,
-        config.GT_ROTATION_AROUND_Y_DEG,
-        config.GT_ROTATION_AROUND_Z_DEG),
-    pose_translation_m: tuple[float, float, float] = (
-        config.GT_TRANSLATION_X_M,
-        config.GT_TRANSLATION_Y_M,
-        config.GT_TRANSLATION_Z_M),
-) -> dict:
+def generate_scene() -> dict:
     """
     Execute the full forward simulation (steps 1-5) and return everything.
 
-    Returns a dictionary so teammates downstream can pick out exactly what
-    they need without unpacking long tuples.
+    This function only orchestrates. Every scene parameter lives in
+    config.py and is pulled in by the individual factories:
+        - make_square_marker()    → marker geometry
+        - make_camera()           → camera intrinsics
+        - make_ground_truth_pose()→ ground-truth pose
+    To run a different scene, edit config.py (or call the factories directly
+    with overrides)
 
-    Args:
-        marker_side_m       : side length L of the square marker (meters)
-        image_width/height  : image resolution (pixels)
-        pose_euler_deg      : ground-truth orientation, intrinsic xyz (degrees)
-        pose_translation_m  : ground-truth translation (meters)
+    Returns a dictionary so downstream code can pick out exactly what it
+    needs without unpacking long tuples.
 
     Returns:
         dict with keys:
             'marker_side'    : float, L in meters
             'object_pts'     : (4, 3) corners in marker frame  (Z=0)
             'camera'         : Camera instance (holds K)
+            'image_width'    : int, image width in pixels
+            'image_height'   : int, image height in pixels
             'R_gt'           : (3, 3) ground-truth rotation matrix
             't_gt'           : (3,)   ground-truth translation (meters)
-            'w_gt'           : (3,)   ground-truth axis-angle ω (radians)
             'pts_cam'        : (4, 3) corners in camera frame
             'image_pts'      : (4, 2) projected 2D image coordinates (pixels)
     """
     # ── Steps 1 + 2 : marker plane and square on it
-    # The marker frame has Z=0 for every corner (planarity).
-    # The square sits centered at the origin with side L.
-    object_pts = square_object_points(side=marker_side_m)        # (4, 3)
+    object_pts = make_square_marker()                            # (4, 3)
 
     # ── Step 3 : camera with known intrinsics
-    # Pinhole model. All four parameters come from config.py by default;
-    # they can still be overridden per-call (useful for sweeps later).
-    # Image size is not stored in the Camera object itself (it only carries K),
-    # but the principal point typically tracks the image center.
-    camera = Camera(fx=camera_fx, fy=camera_fy, cx=camera_cx, cy=camera_cy)
+    camera = make_camera()
 
-    # ── Step 4 : known ground-truth pose
-    # R_gt + t_gt define the rigid transform marker → camera frame.
-    # w_gt is the same rotation expressed as a 3-vector (for future Jacobian work).
-    R_gt, t_gt, w_gt = make_ground_truth_pose(
-        euler_xyz_deg=pose_euler_deg,
-        translation_m=pose_translation_m,
-    )
+    # ── Step 4 : known ground-truth pose (rigid transform marker → camera)
+    R_gt, t_gt = make_ground_truth_pose()
 
     # ── Step 5 : project 3D corners into the image
-    # Two sub-steps:
-    #   (a) marker frame   →   camera frame    via the rigid transform
-    #   (b) camera frame   →   pixel coords    via the pinhole projection
+    #   (a) marker frame → camera frame  via the rigid transform
+    #   (b) camera frame → pixel coords  via the pinhole projection
     pts_cam   = transform_points(object_pts, R_gt, t_gt)         # (4, 3) in camera frame
     image_pts = camera.project(pts_cam)                          # (4, 2) in pixels
 
     return {
-        'marker_side':  marker_side_m,
+        'marker_side':  config.MARKER_SIDE_M,
         'object_pts':   object_pts,
         'camera':       camera,
-        'image_width':  image_width,
-        'image_height': image_height,
+        'image_width':  config.IMAGE_WIDTH,
+        'image_height': config.IMAGE_HEIGHT,
         'R_gt':         R_gt,
         't_gt':         t_gt,
-        'w_gt':         w_gt,
         'pts_cam':      pts_cam,
         'image_pts':    image_pts,
     }
@@ -182,7 +144,6 @@ def _print_scene(scene: dict) -> None:
     H         = scene['image_height']
     R_gt      = scene['R_gt']
     t_gt      = scene['t_gt']
-    w_gt      = scene['w_gt']
     pts_cam   = scene['pts_cam']
     image_pts = scene['image_pts']
 
@@ -206,11 +167,6 @@ def _print_scene(scene: dict) -> None:
     print(f"             Rotation matrix R_gt:")
     for row in R_gt:
         print("               " + " ".join(f"{v:+.6f}" for v in row))
-    angle_deg = np.degrees(np.linalg.norm(w_gt))
-    axis      = w_gt / np.linalg.norm(w_gt)
-    print(f"             Axis-angle vector ω_gt (rad):")
-    print(f"               {w_gt}")
-    print(f"               ‖ω‖ = {angle_deg:.4f}°   axis = {axis}")
 
     print(f"\n[Step 5a]    Marker corners transformed into CAMERA frame (m):")
     for i, p in enumerate(pts_cam):

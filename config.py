@@ -1,5 +1,5 @@
 """
-Global configuration for the synthetic pose-estimation pipeline (steps 1-7).
+Global configuration for the synthetic pose-estimation pipeline (steps 1-5).
 
 Edit the UPPERCASE constants below to change the synthetic scene used by
 pipeline.py. No logic, no imports — just values. Grouped by pipeline step.

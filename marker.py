@@ -1,9 +1,14 @@
 import numpy as np
 
+import config
 
-def square_object_points(side: float) -> np.ndarray:
+
+def make_square_marker(side: float = config.MARKER_SIDE_M) -> np.ndarray:
     """
-    Return the 4 corners of a square marker in its OWN coordinate frame.
+    Build the 4 corners of a square marker in its OWN coordinate frame.
+
+    These are the "object points" in OpenCV PnP terminology: the known 3D
+    positions of the marker corners, expressed in the marker frame.
 
     Convention:
         - Marker lies flat on the Z=0 plane (planarity → enables IPPE)
@@ -23,7 +28,7 @@ def square_object_points(side: float) -> np.ndarray:
         p = K · [r1 | r2 | t] · (X, Y, 1)ᵀ
 
     Args:
-        side : marker side length L (in meters, or any consistent unit)
+        side : marker side length L, in meters (default: config.MARKER_SIDE_M)
 
     Returns:
         (4, 3) array of 3D object points
