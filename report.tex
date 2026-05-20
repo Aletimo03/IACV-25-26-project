@@ -42,13 +42,11 @@
 \vspace{1em}
 
 % ============================================================
-\section{Overview and Notation}
+\paragraph{Overview and Notation}
 % ============================================================
 
 We synthesize the image a calibrated pinhole camera would observe of a
-known planar square marker placed at a known pose, then re-estimate the
-pose from the synthesized image points using our own implementation of
-\verb|SOLVEPNP_IPPE_SQUARE|. The full pipeline:
+known planar square marker placed at a known pose.( no detection )
 
 \begin{enumerate}[label=\textbf{Step \arabic*.}, leftmargin=*]
   \item Generate a 3D plane (the marker plane).
@@ -56,15 +54,10 @@ pose from the synthesized image points using our own implementation of
   \item Define a camera with known intrinsics $\KK$.
   \item Choose a known marker pose $(\Rgt, \tgt)$ relative to the camera.
   \item Project the four 3D corners into the image.
-  \item Re-estimate the pose with our IPPE\_SQUARE (and compare with OpenCV).
-  \item Compare the estimated pose with the ground truth.
 \end{enumerate}
 
-Steps 1--5 are pure forward simulation (no estimation, no noise). Step 6 is
-the actual pose-estimation algorithm. Step 7 quantifies how well the
-estimator recovered the chosen ground truth. The two experiments asked for
-in the brief (two-pose ambiguity sweep; Jacobian conditioning study) are
-\emph{after} this pipeline and are not covered in this document.
+Steps 1--5 are pure forward simulation (no estimation, no noise).
+Steps 6-7 and the 2 experiments -> TO BE DONE
 
 \subsection*{Notation}
 \begin{itemize}[leftmargin=*]
@@ -119,7 +112,6 @@ The parenthesized superscript is the corner index; the subscript ``mk''
 indicates the marker frame.
 
 \paragraph{Corner ordering matters.}
-Pose estimators consume \emph{pairs} of corresponding 3D and 2D corners.
 The order of the 3D list must match the order of the 2D observations,
 otherwise the correspondences are scrambled and the algorithm finds the
 wrong pose (or fails). The order above (counter-clockwise starting at
@@ -147,7 +139,7 @@ objects look smaller).
 \subsection{The intrinsic matrix \texorpdfstring{$\KK$}{K}}
 
 Real images are measured in pixels. The focal length is encoded as
-$f_x, f_y$ (in pixels, possibly different along the two axes if the sensor
+$f_x, f_y$ (in pixels, possibly different along the two axes if the pixel
 elements are not square), and the optical axis hits the image at the
 \emph{principal point} $(c_x, c_y)$. The pixel coordinates are
 \begin{equation}
@@ -167,7 +159,7 @@ so that the projection has the compact homogeneous form
   \qquad
   \mathbf{p} \;=\; \begin{pmatrix} \tilde p_1/\tilde p_3 \\ \tilde p_2/\tilde p_3 \end{pmatrix}.
 \end{equation}
-First line: a linear matrix product. Second line: the perspective divide.
+The first is a linear matrix product, the second is the perspective divide.
 
 \subsection{Normalized image coordinates}
 
@@ -358,11 +350,13 @@ where the projection $\pi:\R^3 \to \R^2$ is the perspective divide
 
 \paragraph{Sanity checks at this point:}
 \begin{itemize}[leftmargin=*]
-  \item All $\Pcam^{(i)}$ have $Z > 0$ (in front of the camera --- \emph{cheirality}).
-  \item All $\mathbf{p}^{(i)}$ fall inside $[0, W) \times [0, H)$ (visible on the sensor).
+  \item All $\Pcam^{(i)}$ have $Z > 0$ (in front of the camera).
+  \item All $\mathbf{p}^{(i)}$ fall inside $[0, W) \times [0, H)$ (visible in the image).
   \item The four $\mathbf{p}^{(i)}$ form a \emph{convex quadrilateral} that looks
         like a perspective-warped square.
 \end{itemize}
+
+\end{document}
 
 % ============================================================
 \section{Step 6 --- Pose Estimation with IPPE\_SQUARE}
@@ -625,5 +619,3 @@ to $[-1, 1]$ before the $\arccos$ call.
 \hline
 \end{tabular}
 \end{center}
-
-\end{document}

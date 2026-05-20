@@ -35,12 +35,12 @@ CAMERA_CY = IMAGE_HEIGHT / 2.0    # principal point y, pixels
 # Step 4 — Ground-truth pose (marker → camera frame)
 # ──────────────────────────────────────────────────────────────────────────
 
-# Rotation: intrinsic xyz Euler angles, degrees.
-GT_ROLL_DEG  = 15.0               # rotation around X (roll)
-GT_PITCH_DEG = 10.0               # rotation around Y (pitch)
-GT_YAW_DEG   =  5.0               # rotation around Z (yaw)
+# Rotation around each axis, in degrees (intrinsic xyz Euler convention).
+GT_ROTATION_AROUND_X_DEG = 15.0   # tilts the marker top toward/away from the camera
+GT_ROTATION_AROUND_Y_DEG = 10.0   # swings the marker left/right (vertical axis)
+GT_ROTATION_AROUND_Z_DEG =  5.0   # spins the marker flat, in its own plane
 
-# Translation: position of the marker origin expressed in the camera frame, meters.
-GT_TX_M = 0.05                    # X: right of optical axis
-GT_TY_M = 0.02                    # Y: below optical axis
-GT_TZ_M = 0.50                    # Z: distance in front of the camera
+# Translation: position of the marker origin in the camera frame, meters.
+GT_TRANSLATION_X_M = 0.05         # right of the optical axis
+GT_TRANSLATION_Y_M = 0.02         # below the optical axis
+GT_TRANSLATION_Z_M = 0.50         # distance in front of the camera

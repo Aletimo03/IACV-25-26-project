@@ -11,10 +11,6 @@ Steps implemented here:
     4. Choose a known marker pose (R_gt, t_gt) relative to the camera.
     5. Project the four 3D corners into the image.
 
-NOT yet implemented (later tasks):
-    6. Re-estimate the pose with our IPPE_SQUARE and compare to OpenCV.
-    7. Compare estimated pose to ground truth.
-
 Output:
     A dictionary holding every quantity in the scene — ready to feed
     into the pose-estimation stage and the Jacobian analysis later on.
@@ -36,9 +32,13 @@ from marker import square_object_points, transform_points
 
 def make_ground_truth_pose(
     euler_xyz_deg: tuple[float, float, float] = (
-        config.GT_ROLL_DEG, config.GT_PITCH_DEG, config.GT_YAW_DEG),
+        config.GT_ROTATION_AROUND_X_DEG,
+        config.GT_ROTATION_AROUND_Y_DEG,
+        config.GT_ROTATION_AROUND_Z_DEG),
     translation_m: tuple[float, float, float] = (
-        config.GT_TX_M,   config.GT_TY_M,    config.GT_TZ_M),
+        config.GT_TRANSLATION_X_M,
+        config.GT_TRANSLATION_Y_M,
+        config.GT_TRANSLATION_Z_M),
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Build a known camera-from-marker pose (R_gt, t_gt).
@@ -69,7 +69,7 @@ def make_ground_truth_pose(
             Z = 50 cm  (half a meter in front of the camera)
 
     Args:
-        euler_xyz_deg : (roll_X, pitch_Y, yaw_Z) in degrees, intrinsic xyz
+        euler_xyz_deg : (rotation_around_X, rotation_around_Y, rotation_around_Z) in degrees, intrinsic xyz
         translation_m : (X, Y, Z) translation of marker origin in camera frame, meters
 
     Returns:
@@ -97,9 +97,13 @@ def generate_scene(
     camera_cx:     float = config.CAMERA_CX,
     camera_cy:     float = config.CAMERA_CY,
     pose_euler_deg: tuple[float, float, float] = (
-        config.GT_ROLL_DEG, config.GT_PITCH_DEG, config.GT_YAW_DEG),
+        config.GT_ROTATION_AROUND_X_DEG,
+        config.GT_ROTATION_AROUND_Y_DEG,
+        config.GT_ROTATION_AROUND_Z_DEG),
     pose_translation_m: tuple[float, float, float] = (
-        config.GT_TX_M,   config.GT_TY_M,    config.GT_TZ_M),
+        config.GT_TRANSLATION_X_M,
+        config.GT_TRANSLATION_Y_M,
+        config.GT_TRANSLATION_Z_M),
 ) -> dict:
     """
     Execute the full forward simulation (steps 1-5) and return everything.
@@ -109,7 +113,7 @@ def generate_scene(
 
     Args:
         marker_side_m       : side length L of the square marker (meters)
-        image_width/height  : sensor resolution (pixels)
+        image_width/height  : image resolution (pixels)
         pose_euler_deg      : ground-truth orientation, intrinsic xyz (degrees)
         pose_translation_m  : ground-truth translation (meters)
 
