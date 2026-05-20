@@ -23,7 +23,7 @@ env/
 Thumbs.db
 *~
 
-# ── LaTeX build artifacts (if you compile pipeline_math.tex locally) ────
+# ── LaTeX build artifacts (if you compile report.tex locally) ────
 *.aux
 *.log
 *.out
