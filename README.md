@@ -21,11 +21,27 @@ Experiment 2 (Jacobian conditioning + Monte Carlo).
 
 | File | Purpose |
 |---|---|
-| `camera.py` | Pinhole camera model: intrinsic matrix `K`, `project()` (3D camera-frame → 2D pixels), `normalize()` (pixels → Z=1 ray directions via `K⁻¹`). |
-| `marker.py` | The square marker geometry: `square_object_points(L)` returns the 4 corners on the Z=0 plane in the OpenCV ordering; `transform_points(R, t)` applies a rigid transform. |
-| `config.py` | All scene parameters as UPPERCASE constants: marker side, image size, camera intrinsics, ground-truth Euler angles + translation. Edit numbers here to change the experiment. |
-| `pipeline.py` | Orchestrator. `generate_scene()` chains steps 1–5 and returns every intermediate quantity. Running it prints a verbose walkthrough with sanity checks. |
-| `pipeline_math.tex` | Full mathematical derivation of steps 1–7 (Overleaf-ready): pinhole model, rigid transforms, rotation representations (Euler / axis-angle / Rodrigues), DLT homography, IPPE_SQUARE pose extraction, error metrics. |
+| `config.py` | All scene parameters as UPPERCASE constants: marker side, image size, camera intrinsics, ground-truth rotation angles + translation. **Edit numbers here to change the scene.** No logic, no imports. |
+| `camera.py` | Pinhole camera. `Camera` class (intrinsics `K`, `project()`, `normalize()`) + `make_camera()` factory that pulls defaults from `config.py`. |
+| `marker.py` | Square marker geometry. `make_square_marker(L)` builds the 4 corner "object points" on the Z=0 plane (OpenCV ordering); `transform_points(pts, R, t)` applies a rigid transform. |
+| `pipeline.py` | Orchestrator. `make_ground_truth_pose()` builds `(R_gt, t_gt)`; `generate_scene()` chains steps 1–5 via the factories and returns every intermediate quantity. Running it prints a verbose walkthrough with sanity checks. |
+| `report.tex` | Overleaf-ready math write-up of steps 1–5: pinhole model, intrinsics & normalized coordinates, rigid transforms, `SO(3)` and Euler angles, the forward projection. |
+
+## Architecture
+
+Each object is built by a **config-aware factory**, so `generate_scene()` is a
+thin orchestrator with no hardcoded parameters:
+
+```
+config.py  ──►  make_square_marker()     # marker corners
+           ──►  make_camera()            # Camera object
+           ──►  make_ground_truth_pose() # (R_gt, t_gt)
+                        │
+                        ▼
+                 generate_scene()  ──►  scene dict
+```
+
+Dependency graph is acyclic: `config` ← `camera`, `marker` ← `pipeline`.
 
 ## Run
 
@@ -33,4 +49,6 @@ Experiment 2 (Jacobian conditioning + Monte Carlo).
 python pipeline.py
 ```
 
-Edit `config.py` to change the synthetic scene.
+Edit `config.py` to change the synthetic scene. To vary parameters
+programmatically (e.g. viewpoint sweeps later), call the factories directly
+with overrides — they all accept arguments and fall back to `config` defaults.
