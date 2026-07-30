@@ -25,6 +25,9 @@ import config
 from camera import make_camera
 from marker import make_square_marker, transform_points
 
+from ippe_square import ippe_square
+import cv2
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Step 4 — Ground-truth pose generator
@@ -117,6 +120,17 @@ def generate_scene() -> dict:
     #   (b) camera frame → pixel coords  via the pinhole projection
     pts_cam   = transform_points(object_pts, R_gt, t_gt)         # (4, 3) in camera frame
     image_pts = camera.project(pts_cam)                          # (4, 2) in pixels
+
+    # ── Step 6 : estimate camera pose with implemented IPPE_SQUARE and validate with opencv algorithm
+    dist = np.zeros(5)
+
+    R_cust, t_cust, err_cust, info = ippe_square(camera, object_pts, image_pts)
+    rvec_cust, _ = cv2.Rodrigues(R_cust)
+
+    _, rvecs_cv, tvecs_cv, errs_cv = cv2.solvePnPGeneric(
+        object_pts, image_pts, camera.K, dist, flags=cv2.SOLVEPNP_IPPE_SQUARE)
+
+    # TODO update return and visualization
 
     return {
         'marker_side':  config.MARKER_SIDE_M,
