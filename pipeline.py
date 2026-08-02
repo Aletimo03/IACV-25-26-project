@@ -124,14 +124,14 @@ def generate_scene() -> dict:
     # ── Step 6 : estimate camera pose with implemented IPPE_SQUARE and validate with opencv algorithm
     dist = np.zeros(5)
 
-    R_cust, t_cust, err_cust, info = ippe_square(camera, object_pts, image_pts)
-    rvec_cust, _ = cv2.Rodrigues(R_cust)
+    R_ours, t_ours, err_ours, info = ippe_square(camera, object_pts, image_pts)
 
     _, rvecs_cv, tvecs_cv, errs_cv = cv2.solvePnPGeneric(
         object_pts, image_pts, camera.K, dist, flags=cv2.SOLVEPNP_IPPE_SQUARE)
+    R_cv = cv2.Rodrigues(rvecs_cv[0])[0]
+    t_cv = tvecs_cv[0].ravel()
 
-    # TODO update return and visualization
-
+    # ── Step 7 : compare estimated poses against the ground truth
     return {
         'marker_side':  config.MARKER_SIDE_M,
         'object_pts':   object_pts,
@@ -142,7 +142,39 @@ def generate_scene() -> dict:
         't_gt':         t_gt,
         'pts_cam':      pts_cam,
         'image_pts':    image_pts,
+        # step 6 — our IPPE_SQUARE
+        'R_ours':        R_ours,
+        't_ours':        t_ours,
+        'reproj_err_ours': err_ours,
+        'solutions':    info['solutions'],     # both candidates, sorted by error
+        'gamma':        info['gamma'],
+        # step 6 — OpenCV reference
+        'R_cv':         R_cv,
+        't_cv':         t_cv,
+        'reproj_err_cv': float(errs_cv[0][0]),
+        'solutions_cv': [(cv2.Rodrigues(r)[0], t.ravel(), float(e[0]))
+                         for r, t, e in zip(rvecs_cv, tvecs_cv, errs_cv)],
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Step 7 — pose comparison metrics
+# ──────────────────────────────────────────────────────────────────────────
+
+def pose_error(R: np.ndarray, t: np.ndarray,
+               R_ref: np.ndarray, t_ref: np.ndarray) -> tuple[float, float]:
+    """
+    Compare a pose (R, t) against a reference pose (R_ref, t_ref).
+
+    Returns:
+        rot_err_deg   : geodesic angle of R_ref^T · R, in degrees
+        trans_err_mm  : Euclidean norm of the translation difference, in mm
+    """
+    R_delta = R_ref.T @ R
+    cos_angle = np.clip((np.trace(R_delta) - 1.0) / 2.0, -1.0, 1.0)
+    rot_err_deg = np.degrees(np.arccos(cos_angle))
+    trans_err_mm = np.linalg.norm(np.asarray(t) - np.asarray(t_ref)) * 1000.0
+    return float(rot_err_deg), float(trans_err_mm)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -162,7 +194,7 @@ def _print_scene(scene: dict) -> None:
     image_pts = scene['image_pts']
 
     print("=" * 72)
-    print("  SYNTHETIC SCENE GENERATION — steps 1 to 5")
+    print("  SYNTHETIC SCENE GENERATION + POSE ESTIMATION — steps 1 to 7")
     print("=" * 72)
 
     print(f"\n[Steps 1+2]  Square marker on the Z=0 plane, side L = {L} m")
@@ -195,6 +227,105 @@ def _print_scene(scene: dict) -> None:
                        (image_pts[:, 1] >= 0) & (image_pts[:, 1] < H))
     print(f"             ✓ all corners inside the image" if in_bounds
           else "             ✗ WARNING: some corners fall outside the image")
+
+    # ── Step 6 : pose estimation, ours vs OpenCV
+    print(f"\n[Step 6]     Pose re-estimation from the 2D-3D correspondences")
+
+    LBL = 12          # width of the left-hand row-label column
+    COL = 45          # width of one candidate column
+
+    def _print_candidates(title: str, sols: list) -> None:
+        """Print the two pose candidates of one solver side by side."""
+        def cell(k: int, kind: str, row: int = 0) -> str:
+            if k >= len(sols):
+                return "—".ljust(COL)
+            R_c, t_c, _ = sols[k]
+            if kind == 't':
+                s = f"{t_c[0]:+.10f} {t_c[1]:+.10f} {t_c[2]:+.10f}"
+            else:
+                s = " ".join(f"{v:+.10f}" for v in R_c[row])
+            return s.ljust(COL)
+
+        def line(label: str, kind: str, row: int = 0) -> None:
+            print(("               " + label.ljust(LBL)
+                   + cell(0, kind, row) + " │ " + cell(1, kind, row)).rstrip())
+
+        print(f"\n             {title}")
+        print("               " + "".ljust(LBL)
+              + "candidate 1 (best)".ljust(COL) + " │ " + "candidate 2")
+        print("               " + "─" * LBL + "─" * COL + "─┼─" + "─" * COL)
+        line("t (m)",  't')
+        line("R",      'R', 0)
+        line("",       'R', 1)
+        line("",       'R', 2)
+
+    _print_candidates("Our IPPE_SQUARE:", scene['solutions'])
+    _print_candidates("OpenCV SOLVEPNP_IPPE_SQUARE:", scene['solutions_cv'])
+
+    d_rot, d_trans = pose_error(scene['R_ours'], scene['t_ours'],
+                                scene['R_cv'],  scene['t_cv'])
+    print(f"\n             ours vs OpenCV agreement: "
+          f"Δrot = {d_rot:.10f}°, Δtrans = {d_trans:.10f} mm")
+
+    print(f"\n             Two-fold planar ambiguity — errors of both candidates:")
+    print(f"               {'source':<10}"
+          f"{'│ candidate 1 (best)':<58}{'│ candidate 2':<58}".rstrip())
+    print(f"               {'':<10}"
+          f"│ {'reproj RMSE (px)':>20}{'rot err (°)':>17}{'trans err (mm)':>17} "
+          f"│ {'reproj RMSE (px)':>20}{'rot err (°)':>17}{'trans err (mm)':>17}")
+    print("               " + "─" * 10 + "┼" + "─" * 57 + "┼" + "─" * 57)
+
+    def _cand_cells(sols):
+        cells = ""
+        for k in range(2):
+            if k < len(sols):
+                R_c, t_c, e_c = sols[k]
+                r_e, t_e = pose_error(R_c, t_c, R_gt, t_gt)
+                cells += f"│ {e_c:>20.10e}{r_e:>17.10f}{t_e:>17.10f} "
+            else:
+                cells += f"│ {'—':>20}{'—':>17}{'—':>17} "
+        return cells
+
+    print((f"               {'ours':<10}" + _cand_cells(scene['solutions'])).rstrip())
+    print((f"               {'OpenCV':<10}" + _cand_cells(scene['solutions_cv'])).rstrip())
+
+    e0 = scene['solutions'][0][2]
+    e1 = scene['solutions'][1][2] if len(scene['solutions']) > 1 else float('inf')
+    ratio = e1 / e0 if e0 > 0 else float('inf')
+    print(f"               error ratio second/first = {ratio:.10f}  "
+          f"({'well separated' if ratio > 3 else 'AMBIGUOUS — candidates hard to tell apart'})")
+
+    # ── Step 7 : estimated pose vs ground truth
+    print(f"\n[Step 7]     Estimated pose vs ground truth")
+    rot_err, trans_err = pose_error(scene['R_ours'], scene['t_ours'], R_gt, t_gt)
+    rot_err_cv, trans_err_cv = pose_error(scene['R_cv'], scene['t_cv'], R_gt, t_gt)
+
+    poses = [("ground truth", R_gt, t_gt),
+             ("ours",         scene['R_ours'], scene['t_ours']),
+             ("OpenCV",       scene['R_cv'],   scene['t_cv'])]
+
+    def gt_cell(kind: str, R_p, t_p, row: int = 0) -> str:
+        s = (f"{t_p[0]:+.10f} {t_p[1]:+.10f} {t_p[2]:+.10f}" if kind == 't'
+             else " ".join(f"{v:+.10f}" for v in R_p[row]))
+        return s.ljust(COL)
+
+    print("\n               " + "".ljust(LBL)
+          + " │ ".join(name.ljust(COL) for name, _, _ in poses).rstrip())
+    print("               " + "─" * LBL + ("─" * COL + "─┼─") * 2 + "─" * COL)
+    print(("               " + "t (m)".ljust(LBL)
+           + " │ ".join(gt_cell('t', R_p, t_p) for _, R_p, t_p in poses)).rstrip())
+    for r in range(3):
+        print(("               " + ("R" if r == 0 else "").ljust(LBL)
+               + " │ ".join(gt_cell('R', R_p, t_p, r)
+                            for _, R_p, t_p in poses)).rstrip())
+
+    print(f"\n               {'method':<22}{'rot err (°)':>17}{'trans err (mm)':>18}")
+    print(f"               {'ours (IPPE_SQUARE)':<22}{rot_err:>17.10f}{trans_err:>18.10f}")
+    print(f"               {'OpenCV IPPE_SQUARE':<22}{rot_err_cv:>17.10f}{trans_err_cv:>18.10f}")
+    ok = rot_err < 1e-3 and trans_err < 1e-3
+    print("             ✓ noiseless recovery of the ground-truth pose" if ok
+          else "             ✗ estimated pose deviates from ground truth "
+               "(expected only with noise, or wrong candidate selected)")
 
     print("\n" + "=" * 72)
 
