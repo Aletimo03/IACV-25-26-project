@@ -13,7 +13,7 @@ def make_square_marker(side: float = config.MARKER_SIDE_M) -> np.ndarray:
     Convention:
         - Marker lies flat on the Z=0 plane (planarity → enables IPPE)
         - Origin at the center of the square
-        - Corners listed counter-clockwise starting from top-left,
+        - Corners listed clockwise starting from top-left,
           matching OpenCV's SOLVEPNP_IPPE_SQUARE expectation:
 
               0 ──────── 1

@@ -1,23 +1,22 @@
 """
-Global configuration for the synthetic pose-estimation pipeline (steps 1-5).
+Global configuration for the synthetic IPPE-square pose-estimation project.
 
 Edit the UPPERCASE constants below to change the synthetic scene used by
 pipeline.py. No logic, no imports — just values. Grouped by pipeline step.
 
-Out of scope for this file:
-    - Pixel noise level (belongs to the Monte Carlo experiment, later)
-    - Pose sweep grids (belong to the viewpoint-sweep experiment, later)
+This module intentionally contains values only.  Experiment logic belongs in
+experiments.py and orchestration belongs in pipeline.py.
 """
 
 # ──────────────────────────────────────────────────────────────────────────
-# Step 2 — Marker geometry
+# Marker geometry
 # ──────────────────────────────────────────────────────────────────────────
 
 MARKER_SIDE_M = 0.10              # square side length L, meters
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Step 3 — Camera intrinsics and image size
+# Camera intrinsics and image size
 # ──────────────────────────────────────────────────────────────────────────
 
 IMAGE_WIDTH  = 640                # image width,  pixels
@@ -32,10 +31,11 @@ CAMERA_CY = IMAGE_HEIGHT / 2.0    # principal point y, pixels
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Step 4 — Ground-truth pose (marker → camera frame)
+# Ground-truth pose (marker → camera frame)
 # ──────────────────────────────────────────────────────────────────────────
 
-# Rotation around each axis, in degrees (intrinsic xyz Euler convention).
+# Rotation around fixed X, Y, Z axes, in degrees.  SciPy's lower-case ``xyz``
+# convention is extrinsic (fixed-axis), matching pipeline.py.
 GT_ROTATION_AROUND_X_DEG = 15.0   # tilts the marker top toward/away from the camera
 GT_ROTATION_AROUND_Y_DEG = 10.0   # swings the marker left/right (vertical axis)
 GT_ROTATION_AROUND_Z_DEG =  5.0   # spins the marker flat, in its own plane
@@ -44,3 +44,31 @@ GT_ROTATION_AROUND_Z_DEG =  5.0   # spins the marker flat, in its own plane
 GT_TRANSLATION_X_M = 0.05         # right of the optical axis
 GT_TRANSLATION_Y_M = 0.02         # below the optical axis
 GT_TRANSLATION_Z_M = 0.50         # distance in front of the camera
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Viewpoint-sweep experiment
+# ──────────────────────────────────────────────────────────────────────────
+
+SWEEP_RADIUS_M = 0.50
+SWEEP_MIN_ANGLE_DEG = 0.0
+SWEEP_MAX_ANGLE_DEG = 75.0
+SWEEP_SAMPLES = 61
+SWEEP_AZIMUTH_DEG = 0.0
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Jacobian and Monte Carlo experiment
+# ──────────────────────────────────────────────────────────────────────────
+
+CORNER_NOISE_STD_PX = 0.5
+MONTE_CARLO_VIEWING_ANGLES_DEG = (5.0, 60.0)
+MONTE_CARLO_TRIALS = 1000
+MONTE_CARLO_SEED = 20260804
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Generated experiment artefacts
+# ──────────────────────────────────────────────────────────────────────────
+
+OUTPUT_DIRECTORY = "outputs"

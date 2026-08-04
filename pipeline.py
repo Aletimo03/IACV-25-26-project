@@ -1,335 +1,266 @@
-"""
-Synthetic scene generator — Steps 1-5 of the project pipeline.
-
-We synthesize the image a calibrated pinhole camera would observe of a
-known planar square marker placed at a known pose.
-
-Steps implemented here:
-    1. Generate a 3D plane (the marker plane, Z=0 in its own frame).
-    2. Define a square on that plane of side L.
-    3. Define a camera with known intrinsics K.
-    4. Choose a known marker pose (R_gt, t_gt) relative to the camera.
-    5. Project the four 3D corners into the image.
-
-Output:
-    A dictionary holding every quantity in the scene — ready to feed
-    into the pose-estimation stage and the Jacobian analysis later on.
-"""
+"""Command-line orchestration for synthetic IPPE-square validation experiments."""
 
 from __future__ import annotations
 
+import argparse
+from pathlib import Path
+
+import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 import config
 from camera import make_camera
+from experiments import (
+    plot_monte_carlo_comparison,
+    plot_viewpoint_sweep,
+    run_monte_carlo_experiment,
+    run_viewpoint_sweep,
+    write_monte_carlo_csv,
+    write_viewpoint_sweep_csv,
+)
+from ippe_square import ippe_square
+from jacobian import analyze_jacobian
 from marker import make_square_marker, transform_points
 
-from ippe_square import ippe_square
-import cv2
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Step 4 — Ground-truth pose generator
-# ──────────────────────────────────────────────────────────────────────────
 
 def make_ground_truth_pose(
     euler_xyz_deg: tuple[float, float, float] = (
         config.GT_ROTATION_AROUND_X_DEG,
         config.GT_ROTATION_AROUND_Y_DEG,
-        config.GT_ROTATION_AROUND_Z_DEG),
+        config.GT_ROTATION_AROUND_Z_DEG,
+    ),
     translation_m: tuple[float, float, float] = (
         config.GT_TRANSLATION_X_M,
         config.GT_TRANSLATION_Y_M,
-        config.GT_TRANSLATION_Z_M),
+        config.GT_TRANSLATION_Z_M,
+    ),
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Build the configured marker-to-camera ground-truth pose.
+
+    SciPy's lower-case ``xyz`` sequence represents fixed-axis (extrinsic)
+    Euler rotations.  Euler angles are used only to specify a readable scene;
+    all estimation and uncertainty calculations use rotation matrices and
+    local rotation vectors.
     """
-    Build a known camera-from-marker pose (R_gt, t_gt).
+    rotation = Rotation.from_euler("xyz", euler_xyz_deg, degrees=True).as_matrix()
+    return rotation, np.asarray(translation_m, dtype=np.float64)
 
-    The pose maps a point from the marker frame to the camera frame:
-        P_cam = R_gt · P_marker + t_gt
 
-    Rotation representation:
-        We accept Euler angles (degrees, intrinsic xyz convention) because
-        they are intuitive — humans can picture "15° tilt around X, 10°
-        around Y, 5° around Z".  Internally we immediately convert to a
-        3×3 rotation matrix for use in the projection chain.
+def _opencv_ippe_square_solutions(
+    object_points: np.ndarray,
+    image_points: np.ndarray,
+    camera_matrix: np.ndarray,
+) -> list[tuple[np.ndarray, np.ndarray, float]]:
+    """Run OpenCV only as the black-box validation reference."""
+    _, rotation_vectors, translation_vectors, errors = cv2.solvePnPGeneric(
+        object_points,
+        image_points,
+        camera_matrix,
+        np.zeros(5),
+        flags=cv2.SOLVEPNP_IPPE_SQUARE,
+    )
+    solutions = [
+        (cv2.Rodrigues(rotation_vector)[0], translation_vector.ravel(), float(error[0]))
+        for rotation_vector, translation_vector, error in zip(
+            rotation_vectors, translation_vectors, errors, strict=True
+        )
+    ]
+    solutions.sort(key=lambda candidate: candidate[2])
+    if len(solutions) != 2:
+        raise RuntimeError("OpenCV IPPE_SQUARE did not return two candidates")
+    return solutions
 
-    Translation:
-        A reasonable inspection-distance scenario:
-            X = 5  cm  (slightly to the right of optical axis)
-            Y = 2  cm  (slightly below)
-            Z = 50 cm  (half a meter in front of the camera)
 
-    Args:
-        euler_xyz_deg : (rotation_around_X, rotation_around_Y, rotation_around_Z) in degrees, intrinsic xyz
-        translation_m : (X, Y, Z) translation of marker origin in camera frame, meters
+def generate_scene() -> dict[str, object]:
+    """Generate the default scene and validate custom IPPE against OpenCV.
 
-    Returns:
-        R_gt : (3, 3) ground-truth rotation matrix
-        t_gt : (3,)   ground-truth translation vector (meters)
+    The pose always maps marker-frame coordinates to the camera frame:
+    ``P_cam = R @ P_marker + t``.  Image observations are generated directly
+    from the pinhole model, so no detector, image processing, or distortion is
+    involved.
     """
-    rotation = Rotation.from_euler('xyz', euler_xyz_deg, degrees=True)
-    R_gt = rotation.as_matrix()                  # (3, 3) rotation matrix
-    t_gt = np.array(translation_m, dtype=np.float64)
-    return R_gt, t_gt
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Steps 1-5 orchestrator
-# ──────────────────────────────────────────────────────────────────────────
-
-def generate_scene() -> dict:
-    """
-    Execute the full forward simulation (steps 1-5) and return everything.
-
-    This function only orchestrates. Every scene parameter lives in
-    config.py and is pulled in by the individual factories:
-        - make_square_marker()    → marker geometry
-        - make_camera()           → camera intrinsics
-        - make_ground_truth_pose()→ ground-truth pose
-    To run a different scene, edit config.py (or call the factories directly
-    with overrides)
-
-    Returns a dictionary so downstream code can pick out exactly what it
-    needs without unpacking long tuples.
-
-    Returns:
-        dict with keys:
-            'marker_side'    : float, L in meters
-            'object_pts'     : (4, 3) corners in marker frame  (Z=0)
-            'camera'         : Camera instance (holds K)
-            'image_width'    : int, image width in pixels
-            'image_height'   : int, image height in pixels
-            'R_gt'           : (3, 3) ground-truth rotation matrix
-            't_gt'           : (3,)   ground-truth translation (meters)
-            'pts_cam'        : (4, 3) corners in camera frame
-            'image_pts'      : (4, 2) projected 2D image coordinates (pixels)
-    """
-    # ── Steps 1 + 2 : marker plane and square on it
-    object_pts = make_square_marker()                            # (4, 3)
-
-    # ── Step 3 : camera with known intrinsics
+    object_points = make_square_marker()
     camera = make_camera()
+    rotation_gt, translation_gt = make_ground_truth_pose()
+    points_camera = transform_points(object_points, rotation_gt, translation_gt)
+    if np.any(points_camera[:, 2] <= 0.0):
+        raise ValueError("The configured marker must lie entirely in front of the camera")
+    image_points = camera.project(points_camera)
 
-    # ── Step 4 : known ground-truth pose (rigid transform marker → camera)
-    R_gt, t_gt = make_ground_truth_pose()
-
-    # ── Step 5 : project 3D corners into the image
-    #   (a) marker frame → camera frame  via the rigid transform
-    #   (b) camera frame → pixel coords  via the pinhole projection
-    pts_cam   = transform_points(object_pts, R_gt, t_gt)         # (4, 3) in camera frame
-    image_pts = camera.project(pts_cam)                          # (4, 2) in pixels
-
-    # ── Step 6 : estimate camera pose with implemented IPPE_SQUARE and validate with opencv algorithm
-    dist = np.zeros(5)
-
-    R_ours, t_ours, err_ours, info = ippe_square(camera, object_pts, image_pts)
-
-    _, rvecs_cv, tvecs_cv, errs_cv = cv2.solvePnPGeneric(
-        object_pts, image_pts, camera.K, dist, flags=cv2.SOLVEPNP_IPPE_SQUARE)
-    R_cv = cv2.Rodrigues(rvecs_cv[0])[0]
-    t_cv = tvecs_cv[0].ravel()
-
-    # ── Step 7 : compare estimated poses against the ground truth
+    rotation_custom, translation_custom, custom_error, info = ippe_square(
+        camera, object_points, image_points
+    )
+    opencv_solutions = _opencv_ippe_square_solutions(object_points, image_points, camera.K)
+    rotation_cv, translation_cv, cv_error = opencv_solutions[0]
+    diagnostics = analyze_jacobian(
+        camera,
+        object_points,
+        rotation_gt,
+        translation_gt,
+        config.CORNER_NOISE_STD_PX,
+    )
     return {
-        'marker_side':  config.MARKER_SIDE_M,
-        'object_pts':   object_pts,
-        'camera':       camera,
-        'image_width':  config.IMAGE_WIDTH,
-        'image_height': config.IMAGE_HEIGHT,
-        'R_gt':         R_gt,
-        't_gt':         t_gt,
-        'pts_cam':      pts_cam,
-        'image_pts':    image_pts,
-        # step 6 — our IPPE_SQUARE
-        'R_ours':        R_ours,
-        't_ours':        t_ours,
-        'reproj_err_ours': err_ours,
-        'solutions':    info['solutions'],     # both candidates, sorted by error
-        'gamma':        info['gamma'],
-        # step 6 — OpenCV reference
-        'R_cv':         R_cv,
-        't_cv':         t_cv,
-        'reproj_err_cv': float(errs_cv[0][0]),
-        'solutions_cv': [(cv2.Rodrigues(r)[0], t.ravel(), float(e[0]))
-                         for r, t, e in zip(rvecs_cv, tvecs_cv, errs_cv)],
+        "marker_side": config.MARKER_SIDE_M,
+        "object_points": object_points,
+        "camera": camera,
+        "image_width": config.IMAGE_WIDTH,
+        "image_height": config.IMAGE_HEIGHT,
+        "R_gt": rotation_gt,
+        "t_gt": translation_gt,
+        "points_camera": points_camera,
+        "image_points": image_points,
+        "R_custom": rotation_custom,
+        "t_custom": translation_custom,
+        "reprojection_error_custom": custom_error,
+        "solutions_custom": info["solutions"],
+        "gamma": info["gamma"],
+        "R_cv": rotation_cv,
+        "t_cv": translation_cv,
+        "reprojection_error_cv": cv_error,
+        "solutions_cv": opencv_solutions,
+        "jacobian_diagnostics": diagnostics,
     }
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Step 7 — pose comparison metrics
-# ──────────────────────────────────────────────────────────────────────────
-
-def pose_error(R: np.ndarray, t: np.ndarray,
-               R_ref: np.ndarray, t_ref: np.ndarray) -> tuple[float, float]:
-    """
-    Compare a pose (R, t) against a reference pose (R_ref, t_ref).
-
-    Returns:
-        rot_err_deg   : geodesic angle of R_ref^T · R, in degrees
-        trans_err_mm  : Euclidean norm of the translation difference, in mm
-    """
-    R_delta = R_ref.T @ R
-    cos_angle = np.clip((np.trace(R_delta) - 1.0) / 2.0, -1.0, 1.0)
-    rot_err_deg = np.degrees(np.arccos(cos_angle))
-    trans_err_mm = np.linalg.norm(np.asarray(t) - np.asarray(t_ref)) * 1000.0
-    return float(rot_err_deg), float(trans_err_mm)
+def pose_error(
+    rotation: np.ndarray,
+    translation: np.ndarray,
+    rotation_reference: np.ndarray,
+    translation_reference: np.ndarray,
+) -> tuple[float, float]:
+    """Return geodesic rotation error (degrees) and translation error (mm)."""
+    relative_rotation = rotation_reference.T @ rotation
+    cosine = np.clip((np.trace(relative_rotation) - 1.0) / 2.0, -1.0, 1.0)
+    rotation_error_deg = float(np.rad2deg(np.arccos(cosine)))
+    translation_error_mm = float(np.linalg.norm(translation - translation_reference) * 1000.0)
+    return rotation_error_deg, translation_error_mm
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Verbose walkthrough — run directly to see every intermediate quantity
-# ──────────────────────────────────────────────────────────────────────────
+def validate_noiseless_scene(scene: dict[str, object]) -> None:
+    """Raise if the synthetic custom/OpenCV primary solutions disagree."""
+    rotation_error_deg, translation_error_mm = pose_error(
+        scene["R_custom"], scene["t_custom"], scene["R_cv"], scene["t_cv"]
+    )
+    if rotation_error_deg > 1e-5 or translation_error_mm > 0.05:
+        raise AssertionError(
+            "Custom IPPE-square does not agree with OpenCV in the noiseless scene: "
+            f"{rotation_error_deg:.3e} deg, {translation_error_mm:.3e} mm"
+        )
 
-def _print_scene(scene: dict) -> None:
-    """Print every quantity in the synthetic scene for visual inspection."""
-    L         = scene['marker_side']
-    obj_pts   = scene['object_pts']
-    cam       = scene['camera']
-    W         = scene['image_width']
-    H         = scene['image_height']
-    R_gt      = scene['R_gt']
-    t_gt      = scene['t_gt']
-    pts_cam   = scene['pts_cam']
-    image_pts = scene['image_pts']
 
-    print("=" * 72)
-    print("  SYNTHETIC SCENE GENERATION + POSE ESTIMATION — steps 1 to 7")
-    print("=" * 72)
+def _print_baseline(scene: dict[str, object]) -> None:
+    """Print a concise, reproducible validation summary for the default scene."""
+    validate_noiseless_scene(scene)
+    rotation_gt = scene["R_gt"]
+    translation_gt = scene["t_gt"]
+    print("Synthetic IPPE-square baseline")
+    print("  Convention: P_cam = R @ P_marker + t; camera +Z is forward.")
+    print("  Object corners follow OpenCV's canonical IPPE_SQUARE order.")
+    print("\n  candidate     source       RMSE (px)     rot. error (deg)    trans. error (mm)")
+    for source, solutions in (
+        ("custom", scene["solutions_custom"]),
+        ("OpenCV", scene["solutions_cv"]),
+    ):
+        for index, (rotation, translation, error) in enumerate(solutions, start=1):
+            rotation_error, translation_error = pose_error(
+                rotation, translation, rotation_gt, translation_gt
+            )
+            print(
+                f"  {index:<13} {source:<10} {error:>11.6g}"
+                f" {rotation_error:>19.9g} {translation_error:>20.9g}"
+            )
 
-    print(f"\n[Steps 1+2]  Square marker on the Z=0 plane, side L = {L} m")
-    print(f"             (origin at marker center, corners labeled 0..3)")
-    for i, p in enumerate(obj_pts):
-        print(f"               corner {i}: ({p[0]:+.4f}, {p[1]:+.4f}, {p[2]:+.4f})")
+    diagnostics = scene["jacobian_diagnostics"]
+    print("\n  Jacobian diagnostics at the ground truth")
+    print(f"  shape: {diagnostics.jacobian.shape}")
+    print("  singular values:", np.array2string(diagnostics.singular_values, precision=5))
+    print(f"  smallest singular value: {diagnostics.smallest_singular_value:.6g}")
+    print(f"  condition number: {diagnostics.condition_number:.6g}")
 
-    print(f"\n[Step 3]     Pinhole camera intrinsics (K):")
-    for row in cam.K:
-        print("               " + " ".join(f"{v:8.2f}" for v in row))
-    print(f"               image size: {W} × {H} px")
 
-    print(f"\n[Step 4]     Ground-truth pose  (marker → camera frame)")
-    print(f"             Translation t_gt (m):")
-    print(f"               {t_gt}")
-    print(f"             Rotation matrix R_gt:")
-    for row in R_gt:
-        print("               " + " ".join(f"{v:+.6f}" for v in row))
+def _run_sweep(output_directory: Path) -> None:
+    """Run and persist the configured two-candidate viewpoint sweep."""
+    camera = make_camera()
+    object_points = make_square_marker()
+    results = run_viewpoint_sweep(
+        camera,
+        object_points,
+        config.SWEEP_RADIUS_M,
+        config.SWEEP_MIN_ANGLE_DEG,
+        config.SWEEP_MAX_ANGLE_DEG,
+        config.SWEEP_SAMPLES,
+        config.CORNER_NOISE_STD_PX,
+        config.SWEEP_AZIMUTH_DEG,
+    )
+    plot_path = plot_viewpoint_sweep(results, output_directory / "viewpoint_sweep.png")
+    csv_path = write_viewpoint_sweep_csv(results, output_directory / "viewpoint_sweep.csv")
+    print("\nViewpoint sweep")
+    print(f"  wrote {plot_path}")
+    print(f"  wrote {csv_path}")
+    print(
+        "  candidate-2 RMSE: "
+        f"{results[0].candidate_rmse_px[1]:.6g} px at {results[0].viewing_angle_deg:g}° "
+        f"→ {results[-1].candidate_rmse_px[1]:.6g} px at {results[-1].viewing_angle_deg:g}°"
+    )
 
-    print(f"\n[Step 5a]    Marker corners transformed into CAMERA frame (m):")
-    for i, p in enumerate(pts_cam):
-        print(f"               corner {i}: ({p[0]:+.4f}, {p[1]:+.4f}, {p[2]:+.4f})")
-    assert np.all(pts_cam[:, 2] > 0), "All marker corners must be in front of the camera (Z > 0)"
-    print(f"             ✓ all Z > 0 — marker is in front of the camera")
 
-    print(f"\n[Step 5b]    Projected 2D image points (pixels):")
-    for i, p in enumerate(image_pts):
-        print(f"               corner {i}: ({p[0]:8.3f}, {p[1]:8.3f})")
-    in_bounds = np.all((image_pts[:, 0] >= 0) & (image_pts[:, 0] < W) &
-                       (image_pts[:, 1] >= 0) & (image_pts[:, 1] < H))
-    print(f"             ✓ all corners inside the image" if in_bounds
-          else "             ✗ WARNING: some corners fall outside the image")
+def _run_monte_carlo(output_directory: Path) -> None:
+    """Run and persist the configured empirical-versus-Jacobian noise study."""
+    summaries = run_monte_carlo_experiment(
+        make_camera(),
+        make_square_marker(),
+        config.SWEEP_RADIUS_M,
+        config.MONTE_CARLO_VIEWING_ANGLES_DEG,
+        config.CORNER_NOISE_STD_PX,
+        config.MONTE_CARLO_TRIALS,
+        config.MONTE_CARLO_SEED,
+        config.SWEEP_AZIMUTH_DEG,
+    )
+    plot_path = plot_monte_carlo_comparison(summaries, output_directory / "monte_carlo_variance.png")
+    csv_path = write_monte_carlo_csv(summaries, output_directory / "monte_carlo_summary.csv")
+    print("\nMonte Carlo (independent Gaussian noise per image coordinate)")
+    print(f"  wrote {plot_path}")
+    print(f"  wrote {csv_path}")
+    for summary in summaries:
+        print(
+            f"  {summary.viewing_angle_deg:g}°: sigma_min={summary.smallest_singular_value:.6g}, "
+            f"cond(J)={summary.condition_number:.6g}"
+        )
+        print("    empirical variance:", np.array2string(summary.empirical_variance, precision=4))
+        print("    predicted variance:", np.array2string(summary.predicted_variance, precision=4))
 
-    # ── Step 6 : pose estimation, ours vs OpenCV
-    print(f"\n[Step 6]     Pose re-estimation from the 2D-3D correspondences")
 
-    LBL = 12          # width of the left-hand row-label column
-    COL = 45          # width of one candidate column
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline", action="store_true", help="run the noiseless custom/OpenCV validation")
+    parser.add_argument("--sweep", action="store_true", help="run the viewpoint sweep and save its plot")
+    parser.add_argument("--monte-carlo", action="store_true", help="run the Gaussian-noise study and save its plot")
+    parser.add_argument("--all", action="store_true", help="run the baseline and both experiments")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path(config.OUTPUT_DIRECTORY),
+        help=f"directory for generated plots and CSV files (default: {config.OUTPUT_DIRECTORY})",
+    )
+    return parser.parse_args()
 
-    def _print_candidates(title: str, sols: list) -> None:
-        """Print the two pose candidates of one solver side by side."""
-        def cell(k: int, kind: str, row: int = 0) -> str:
-            if k >= len(sols):
-                return "—".ljust(COL)
-            R_c, t_c, _ = sols[k]
-            if kind == 't':
-                s = f"{t_c[0]:+.10f} {t_c[1]:+.10f} {t_c[2]:+.10f}"
-            else:
-                s = " ".join(f"{v:+.10f}" for v in R_c[row])
-            return s.ljust(COL)
 
-        def line(label: str, kind: str, row: int = 0) -> None:
-            print(("               " + label.ljust(LBL)
-                   + cell(0, kind, row) + " │ " + cell(1, kind, row)).rstrip())
-
-        print(f"\n             {title}")
-        print("               " + "".ljust(LBL)
-              + "candidate 1 (best)".ljust(COL) + " │ " + "candidate 2")
-        print("               " + "─" * LBL + "─" * COL + "─┼─" + "─" * COL)
-        line("t (m)",  't')
-        line("R",      'R', 0)
-        line("",       'R', 1)
-        line("",       'R', 2)
-
-    _print_candidates("Our IPPE_SQUARE:", scene['solutions'])
-    _print_candidates("OpenCV SOLVEPNP_IPPE_SQUARE:", scene['solutions_cv'])
-
-    d_rot, d_trans = pose_error(scene['R_ours'], scene['t_ours'],
-                                scene['R_cv'],  scene['t_cv'])
-    print(f"\n             ours vs OpenCV agreement: "
-          f"Δrot = {d_rot:.10f}°, Δtrans = {d_trans:.10f} mm")
-
-    print(f"\n             Two-fold planar ambiguity — errors of both candidates:")
-    print(f"               {'source':<10}"
-          f"{'│ candidate 1 (best)':<58}{'│ candidate 2':<58}".rstrip())
-    print(f"               {'':<10}"
-          f"│ {'reproj RMSE (px)':>20}{'rot err (°)':>17}{'trans err (mm)':>17} "
-          f"│ {'reproj RMSE (px)':>20}{'rot err (°)':>17}{'trans err (mm)':>17}")
-    print("               " + "─" * 10 + "┼" + "─" * 57 + "┼" + "─" * 57)
-
-    def _cand_cells(sols):
-        cells = ""
-        for k in range(2):
-            if k < len(sols):
-                R_c, t_c, e_c = sols[k]
-                r_e, t_e = pose_error(R_c, t_c, R_gt, t_gt)
-                cells += f"│ {e_c:>20.10e}{r_e:>17.10f}{t_e:>17.10f} "
-            else:
-                cells += f"│ {'—':>20}{'—':>17}{'—':>17} "
-        return cells
-
-    print((f"               {'ours':<10}" + _cand_cells(scene['solutions'])).rstrip())
-    print((f"               {'OpenCV':<10}" + _cand_cells(scene['solutions_cv'])).rstrip())
-
-    e0 = scene['solutions'][0][2]
-    e1 = scene['solutions'][1][2] if len(scene['solutions']) > 1 else float('inf')
-    ratio = e1 / e0 if e0 > 0 else float('inf')
-    print(f"               error ratio second/first = {ratio:.10f}  "
-          f"({'well separated' if ratio > 3 else 'AMBIGUOUS — candidates hard to tell apart'})")
-
-    # ── Step 7 : estimated pose vs ground truth
-    print(f"\n[Step 7]     Estimated pose vs ground truth")
-    rot_err, trans_err = pose_error(scene['R_ours'], scene['t_ours'], R_gt, t_gt)
-    rot_err_cv, trans_err_cv = pose_error(scene['R_cv'], scene['t_cv'], R_gt, t_gt)
-
-    poses = [("ground truth", R_gt, t_gt),
-             ("ours",         scene['R_ours'], scene['t_ours']),
-             ("OpenCV",       scene['R_cv'],   scene['t_cv'])]
-
-    def gt_cell(kind: str, R_p, t_p, row: int = 0) -> str:
-        s = (f"{t_p[0]:+.10f} {t_p[1]:+.10f} {t_p[2]:+.10f}" if kind == 't'
-             else " ".join(f"{v:+.10f}" for v in R_p[row]))
-        return s.ljust(COL)
-
-    print("\n               " + "".ljust(LBL)
-          + " │ ".join(name.ljust(COL) for name, _, _ in poses).rstrip())
-    print("               " + "─" * LBL + ("─" * COL + "─┼─") * 2 + "─" * COL)
-    print(("               " + "t (m)".ljust(LBL)
-           + " │ ".join(gt_cell('t', R_p, t_p) for _, R_p, t_p in poses)).rstrip())
-    for r in range(3):
-        print(("               " + ("R" if r == 0 else "").ljust(LBL)
-               + " │ ".join(gt_cell('R', R_p, t_p, r)
-                            for _, R_p, t_p in poses)).rstrip())
-
-    print(f"\n               {'method':<22}{'rot err (°)':>17}{'trans err (mm)':>18}")
-    print(f"               {'ours (IPPE_SQUARE)':<22}{rot_err:>17.10f}{trans_err:>18.10f}")
-    print(f"               {'OpenCV IPPE_SQUARE':<22}{rot_err_cv:>17.10f}{trans_err_cv:>18.10f}")
-    ok = rot_err < 1e-3 and trans_err < 1e-3
-    print("             ✓ noiseless recovery of the ground-truth pose" if ok
-          else "             ✗ estimated pose deviates from ground truth "
-               "(expected only with noise, or wrong candidate selected)")
-
-    print("\n" + "=" * 72)
+def main() -> None:
+    """Run the requested synthetic validation workflow."""
+    args = _parse_args()
+    run_baseline = args.baseline or args.all or not (args.sweep or args.monte_carlo)
+    run_sweep = args.sweep or args.all
+    run_monte_carlo = args.monte_carlo or args.all
+    if run_baseline:
+        _print_baseline(generate_scene())
+    if run_sweep or run_monte_carlo:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+    if run_sweep:
+        _run_sweep(args.output_dir)
+    if run_monte_carlo:
+        _run_monte_carlo(args.output_dir)
 
 
 if __name__ == "__main__":
-    scene = generate_scene()
-    _print_scene(scene)
+    main()

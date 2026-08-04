@@ -1,6 +1,6 @@
 % ============================================================
 %  IACV 2025/26 Project — Synthetic Pose Estimation Pipeline
-%  Mathematical Foundations of the Pipeline (steps 1-5)
+%  Geometry, IPPE-square, and conditioning experiments
 %  Ready to compile on Overleaf (pdfLaTeX).
 % ============================================================
 \documentclass[11pt]{article}
@@ -26,8 +26,8 @@
 \newcommand{\Pmark}{\mathbf{P}_{\text{mk}}}
 \newcommand{\KK}{\mathbf{K}}
 
-\title{Synthetic Pose Estimation Pipeline \\[0.3em]
-       \large Mathematical Foundations --- Steps 1 to 5}
+\title{Synthetic IPPE-Square Pose Estimation \\[0.3em]
+       \large Geometry, Two-Pose Ambiguity, and Conditioning}
 \author{IACV 2025/26 Project}
 \date{\today}
 
@@ -41,7 +41,9 @@
 % ============================================================
 
 We synthesize the image a calibrated pinhole camera would observe of a
-known planar square marker placed at a known pose.( no detection )
+known planar square marker placed at a known pose. There is no detection or
+image-processing stage: all 3D--2D corner correspondences are generated
+mathematically.
 
 \begin{enumerate}[label=\textbf{Step \arabic*.}, leftmargin=*]
   \item Generate a 3D plane (the marker plane).
@@ -49,10 +51,13 @@ known planar square marker placed at a known pose.( no detection )
   \item Define a camera with known intrinsics $\KK$.
   \item Choose a known marker pose $(\Rgt, \tgt)$ relative to the camera.
   \item Project the four 3D corners into the image.
+  \item Recover both planar IPPE-square pose candidates from the correspondences.
+  \item Compare the custom primary candidate to OpenCV's
+        \verb|SOLVEPNP_IPPE_SQUARE| in the noiseless case.
 \end{enumerate}
 
-Steps 1--5 are pure forward simulation (no estimation, no noise).
-Steps 6-7 and the 2 experiments -> TO BE DONE
+The remaining experiments sweep the front-facing camera viewpoint and study
+the reprojection Jacobian under Gaussian pixel noise.
 
 \subsection*{Notation}
 \begin{itemize}[leftmargin=*]
@@ -210,9 +215,11 @@ describe a rotation in 3D.
 \subsection{Representation 1: Euler angles}
 
 Decompose any rotation as three elementary rotations around the coordinate
-axes. The \emph{intrinsic xyz} convention used in our code is
+axes. The code uses SciPy's lower-case \emph{extrinsic xyz} convention: the
+rotations are applied about fixed camera axes, and the resulting active
+matrix is
 \begin{equation}
-  \mathbf{R}(\alpha,\beta,\gamma) \;=\; \mathbf{R}_x(\alpha)\,\mathbf{R}_y(\beta)\,\mathbf{R}_z(\gamma),
+  \mathbf{R}(\alpha,\beta,\gamma) \;=\; \mathbf{R}_z(\gamma)\,\mathbf{R}_y(\beta)\,\mathbf{R}_x(\alpha).
 \end{equation}
 where each $\mathbf{R}_\bullet(\cdot)$ is a $3\times 3$ planar rotation, e.g.
 \begin{equation}
@@ -282,5 +289,69 @@ where the projection $\pi:\R^3 \to \R^2$ is the perspective divide
   \item The four $\mathbf{p}^{(i)}$ form a \emph{convex quadrilateral} that looks
         like a perspective-warped square.
 \end{itemize}
+
+% ============================================================
+\section{IPPE-Square Pose Recovery and Validation}
+% ============================================================
+
+The marker is planar, so its normalized-image projection is a homography
+\begin{equation}
+  \begin{pmatrix} x_n \\ y_n \\ 1 \end{pmatrix}
+  \sim \mathbf{H}\begin{pmatrix} X \\ Y \\ 1 \end{pmatrix}.
+\end{equation}
+The custom solver estimates $\mathbf{H}$ by DLT, evaluates its quotient-rule
+Jacobian at the square centre, and applies the IPPE construction to obtain two
+rotation candidates. Translation is then estimated linearly for each fixed
+rotation. The two candidates are kept unpolished and ranked by pixel RMSE:
+an unrestricted nonlinear refinement may converge both starts to the same
+pose and incorrectly hide the planar ambiguity.
+
+The custom implementation is compared in the noiseless synthetic scene with
+OpenCV's \verb|solvePnPGeneric(..., SOLVEPNP_IPPE_SQUARE)|. Both use the same
+canonical centred-square point order. OpenCV is a reference only; the custom
+solver itself has no OpenCV dependency.
+
+% ============================================================
+\section{Jacobian and Uncertainty Analysis}
+% ============================================================
+
+Let $\mathbf{r}$ stack the eight scalar pixel residuals of the four corners.
+For a local pose increment ordered as
+\begin{equation}
+  \delta\boldsymbol{\theta} =
+  (\delta t_x,\delta t_y,\delta t_z,
+   \delta\omega_x,\delta\omega_y,\delta\omega_z)^\top,
+\end{equation}
+the rotation update is right-multiplied,
+$\mathbf{R}'=\mathbf{R}\exp([\delta\boldsymbol{\omega}]_\times)$. For a
+marker point $\mathbf{X}$ this gives
+\begin{equation}
+ \frac{\partial \Pcam}{\partial \delta\boldsymbol{\theta}}
+ = \begin{bmatrix}\mathbf{I} & -\mathbf{R}[\mathbf{X}]_\times\end{bmatrix}.
+\end{equation}
+Combining it with the pinhole derivative produces an $8\times6$ analytic
+Jacobian. Its singular values, smallest singular value, and condition number
+quantify local sensitivity. With independent image-coordinate noise of
+standard deviation $\sigma_{px}$, the first-order covariance prediction is
+\begin{equation}
+  \operatorname{Cov}(\delta\boldsymbol{\theta})
+  \approx \sigma_{px}^2(\mathbf{J}^\top\mathbf{J})^{-1}.
+\end{equation}
+Translation is expressed in metres and rotation in radians, so these units
+are part of the stated conditioning convention.
+
+% ============================================================
+\section{Synthetic Experiments}
+% ============================================================
+
+For the viewpoint sweep, the camera centre moves on a fixed-radius,
+front-facing arc from $0^\circ$ (fronto-parallel) to $75^\circ$, while always
+looking at the marker centre. Both IPPE candidates and their reprojection
+errors are recorded at each viewpoint and plotted against the viewing angle.
+
+For Monte Carlo validation, independent zero-mean Gaussian noise is added to
+each of the eight scalar image coordinates. Repeated pose estimates at a
+near-frontal and an oblique view yield empirical local-pose covariances, which
+are compared directly with the Jacobian-based covariance prediction above.
 
 \end{document}

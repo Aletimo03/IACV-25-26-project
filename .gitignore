@@ -33,3 +33,6 @@ Thumbs.db
 *.fdb_latexmk
 *.bbl
 *.blg
+
+# ── Generated synthetic-experiment artefacts ─────────────────────────────
+outputs/

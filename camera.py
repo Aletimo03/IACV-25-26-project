@@ -18,7 +18,7 @@ class Camera:
     In matrix form (homogeneous):
         [u*Z]   [fx   0  cx] [X]
         [v*Z] = [ 0  fy  cy] [Y]  =  K · P_cam
-        [  Z]   [ 0   0   1] [Z]
+        [ Z ]   [ 0   0   1] [Z]
 
     Then divide by Z to get the actual pixel (u, v).
     """
@@ -86,9 +86,9 @@ class Camera:
             y_n = (v - cy) / fy
 
         Equivalently in matrix form:
-            [x_n]           [u]
+            [x_n]          [u]
             [y_n] = K⁻¹  · [v]
-            [ 1 ]           [1]
+            [ 1 ]          [1]
 
         Why this matters for IPPE:
             The homography H maps marker plane → image. If we work in
