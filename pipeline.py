@@ -1,27 +1,21 @@
-"""Command-line orchestration for synthetic IPPE-square validation experiments."""
+"""Steps 1-7: the synthetic pipeline, end to end, on one scene.
+
+Build the marker and the camera, pick a known pose, project the four corners,
+recover both IPPE candidates with our own solver, and check them against
+OpenCV and against the ground truth. Running this file prints every
+intermediate quantity. The two viewpoint studies live in experiment1.py and
+experiment2.py.
+"""
 
 from __future__ import annotations
-
-import argparse
-from pathlib import Path
 
 import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 import config
-from camera import make_camera
-from experiments import (
-    plot_monte_carlo_comparison,
-    plot_viewpoint_sweep,
-    run_monte_carlo_experiment,
-    run_viewpoint_sweep,
-    write_monte_carlo_csv,
-    write_viewpoint_sweep_csv,
-)
-from ippe_square import ippe_square
-from jacobian import analyze_jacobian
-from marker import make_square_marker, transform_points
+from geometry import make_camera, make_square_marker, transform_points
+from ippe_square import ippe_square, project_points
 
 
 def make_ground_truth_pose(
@@ -36,14 +30,20 @@ def make_ground_truth_pose(
         config.GT_TRANSLATION_Z_M,
     ),
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build the configured marker-to-camera ground-truth pose.
+    """The ground-truth pose from the angles and offsets in config.py.
 
-    SciPy's lower-case ``xyz`` sequence represents fixed-axis (extrinsic)
-    Euler rotations.  Euler angles are used only to specify a readable scene;
-    all estimation and uncertainty calculations use rotation matrices and
-    local rotation vectors.
+    SciPy's lower-case "xyz" means extrinsic (fixed-axis) Euler angles. They
+    are here only to describe the scene in readable terms -- nothing in the
+    estimation ever touches Euler angles.
+
+    The flip matters. With R = I the marker's +Z normal points the same way as
+    the camera's, i.e. away from us, so small Euler angles would be tilting the
+    *back* of the marker. Composing with a 180-degree rotation about X puts the
+    marker face towards the camera, like a real detected ArUco, and lets the
+    config angles mean what their comments say: tilt away from fronto-parallel.
     """
-    rotation = Rotation.from_euler("xyz", euler_xyz_deg, degrees=True).as_matrix()
+    face_camera = np.diag([1.0, -1.0, -1.0])
+    rotation = Rotation.from_euler("xyz", euler_xyz_deg, degrees=True).as_matrix() @ face_camera
     return rotation, np.asarray(translation_m, dtype=np.float64)
 
 
@@ -52,7 +52,7 @@ def _opencv_ippe_square_solutions(
     image_points: np.ndarray,
     camera_matrix: np.ndarray,
 ) -> list[tuple[np.ndarray, np.ndarray, float]]:
-    """Run OpenCV only as the black-box validation reference."""
+    """OpenCV's answer, used purely as an external check on ours."""
     _, rotation_vectors, translation_vectors, errors = cv2.solvePnPGeneric(
         object_points,
         image_points,
@@ -73,12 +73,11 @@ def _opencv_ippe_square_solutions(
 
 
 def generate_scene() -> dict[str, object]:
-    """Generate the default scene and validate custom IPPE against OpenCV.
+    """Build the default scene and solve it with both solvers.
 
-    The pose always maps marker-frame coordinates to the camera frame:
-    ``P_cam = R @ P_marker + t``.  Image observations are generated directly
-    from the pinhole model, so no detector, image processing, or distortion is
-    involved.
+    The pose always maps marker coordinates into the camera frame,
+    P_cam = R @ P_marker + t. Image points come straight out of the pinhole
+    model: no detector, no image processing, no lens distortion.
     """
     object_points = make_square_marker()
     camera = make_camera()
@@ -93,13 +92,6 @@ def generate_scene() -> dict[str, object]:
     )
     opencv_solutions = _opencv_ippe_square_solutions(object_points, image_points, camera.K)
     rotation_cv, translation_cv, cv_error = opencv_solutions[0]
-    diagnostics = analyze_jacobian(
-        camera,
-        object_points,
-        rotation_gt,
-        translation_gt,
-        config.CORNER_NOISE_STD_PX,
-    )
     return {
         "marker_side": config.MARKER_SIDE_M,
         "object_points": object_points,
@@ -119,7 +111,6 @@ def generate_scene() -> dict[str, object]:
         "t_cv": translation_cv,
         "reprojection_error_cv": cv_error,
         "solutions_cv": opencv_solutions,
-        "jacobian_diagnostics": diagnostics,
     }
 
 
@@ -129,7 +120,7 @@ def pose_error(
     rotation_reference: np.ndarray,
     translation_reference: np.ndarray,
 ) -> tuple[float, float]:
-    """Return geodesic rotation error (degrees) and translation error (mm)."""
+    """Rotation error in degrees and translation error in millimetres."""
     relative_rotation = rotation_reference.T @ rotation
     cosine = np.clip((np.trace(relative_rotation) - 1.0) / 2.0, -1.0, 1.0)
     rotation_error_deg = float(np.rad2deg(np.arccos(cosine)))
@@ -138,7 +129,7 @@ def pose_error(
 
 
 def validate_noiseless_scene(scene: dict[str, object]) -> None:
-    """Raise if the synthetic custom/OpenCV primary solutions disagree."""
+    """Complain loudly if our primary pose drifts away from OpenCV's."""
     rotation_error_deg, translation_error_mm = pose_error(
         scene["R_custom"], scene["t_custom"], scene["R_cv"], scene["t_cv"]
     )
@@ -149,15 +140,68 @@ def validate_noiseless_scene(scene: dict[str, object]) -> None:
         )
 
 
+def viewing_angle_deg(rotation: np.ndarray, translation: np.ndarray) -> float:
+    """Angle between the marker normal and the line back to the camera.
+
+    Same quantity the experiments sweep over: 0 is fronto-parallel, and
+    anything above 90 means we are looking at the back of the marker.
+    """
+    marker_normal_in_camera = rotation @ np.array([0.0, 0.0, 1.0])
+    marker_to_camera = -translation / np.linalg.norm(translation)
+    cosine = np.clip(marker_normal_in_camera @ marker_to_camera, -1.0, 1.0)
+    return float(np.rad2deg(np.arccos(cosine)))
+
+
+def _matrix_lines(matrix: np.ndarray, indent: str = "      ") -> str:
+    """Print a matrix with aligned columns and signs."""
+    return "\n".join(
+        indent + "[" + "  ".join(f"{value:+9.6f}" for value in row) + "]" for row in matrix
+    )
+
+
 def _print_baseline(scene: dict[str, object]) -> None:
-    """Print a concise, reproducible validation summary for the default scene."""
-    validate_noiseless_scene(scene)
+    """Walk the whole pipeline on the default scene, printing as we go."""
     rotation_gt = scene["R_gt"]
     translation_gt = scene["t_gt"]
-    print("Synthetic IPPE-square baseline")
-    print("  Convention: P_cam = R @ P_marker + t; camera +Z is forward.")
-    print("  Object corners follow OpenCV's canonical IPPE_SQUARE order.")
-    print("\n  candidate     source       RMSE (px)     rot. error (deg)    trans. error (mm)")
+    object_points = scene["object_points"]
+    camera = scene["camera"]
+    image_points = scene["image_points"]
+
+    print("=" * 78)
+    print("SYNTHETIC IPPE-SQUARE PIPELINE --- STEPS 1-7")
+    print("=" * 78)
+    print("Convention: P_cam = R @ P_marker + t; camera +X right, +Y down, +Z forward.")
+
+    print("\n[Steps 1-2] Marker plane and square")
+    print(f"  side L = {scene['marker_side']} m, corners centred on the marker Z=0 plane")
+    print("  corner   X (m)      Y (m)      Z (m)")
+    for index, point in enumerate(object_points):
+        print(f"  {index:<8} {point[0]:+.4f}    {point[1]:+.4f}    {point[2]:+.4f}")
+
+    print("\n[Step 3] Camera intrinsics")
+    print(f"  image {scene['image_width']} x {scene['image_height']} px, "
+          f"fx={camera.fx:g}, fy={camera.fy:g}, cx={camera.cx:g}, cy={camera.cy:g}")
+
+    print("\n[Step 4] Ground-truth pose (marker -> camera)")
+    print("    R_gt =")
+    print(_matrix_lines(rotation_gt))
+    print(f"    t_gt = [{translation_gt[0]:+.4f}, {translation_gt[1]:+.4f}, "
+          f"{translation_gt[2]:+.4f}] m")
+    print(f"    marker normal in camera frame = "
+          f"{np.array2string(rotation_gt @ np.array([0.0, 0.0, 1.0]), precision=4)}")
+    print(f"    viewing angle from fronto-parallel = "
+          f"{viewing_angle_deg(rotation_gt, translation_gt):.2f} deg "
+          f"(< 90 means the marker faces the camera)")
+
+    print("\n[Step 5] Forward projection")
+    print("  corner   X_cam      Y_cam      Z_cam        u (px)     v (px)")
+    for index, (camera_point, pixel) in enumerate(zip(scene["points_camera"], image_points)):
+        print(
+            f"  {index:<8} {camera_point[0]:+.4f}    {camera_point[1]:+.4f}    "
+            f"{camera_point[2]:+.4f}     {pixel[0]:8.3f}   {pixel[1]:8.3f}"
+        )
+
+    print("\n[Step 6] Pose recovery: both IPPE-square candidates")
     for source, solutions in (
         ("custom", scene["solutions_custom"]),
         ("OpenCV", scene["solutions_cv"]),
@@ -166,100 +210,39 @@ def _print_baseline(scene: dict[str, object]) -> None:
             rotation_error, translation_error = pose_error(
                 rotation, translation, rotation_gt, translation_gt
             )
-            print(
-                f"  {index:<13} {source:<10} {error:>11.6g}"
-                f" {rotation_error:>19.9g} {translation_error:>20.9g}"
-            )
+            print(f"\n  {source} candidate {index}:  RMSE = {error:.6g} px")
+            print("    R =")
+            print(_matrix_lines(rotation))
+            print(f"    t = [{translation[0]:+.4f}, {translation[1]:+.4f}, "
+                  f"{translation[2]:+.4f}] m")
+            print(f"    error vs ground truth: {rotation_error:.6g} deg, "
+                  f"{translation_error:.6g} mm")
 
-    diagnostics = scene["jacobian_diagnostics"]
-    print("\n  Jacobian diagnostics at the ground truth")
-    print(f"  shape: {diagnostics.jacobian.shape}")
-    print("  singular values:", np.array2string(diagnostics.singular_values, precision=5))
-    print(f"  smallest singular value: {diagnostics.smallest_singular_value:.6g}")
-    print(f"  condition number: {diagnostics.condition_number:.6g}")
-
-
-def _run_sweep(output_directory: Path) -> None:
-    """Run and persist the configured two-candidate viewpoint sweep."""
-    camera = make_camera()
-    object_points = make_square_marker()
-    results = run_viewpoint_sweep(
-        camera,
-        object_points,
-        config.SWEEP_RADIUS_M,
-        config.SWEEP_MIN_ANGLE_DEG,
-        config.SWEEP_MAX_ANGLE_DEG,
-        config.SWEEP_SAMPLES,
-        config.CORNER_NOISE_STD_PX,
-        config.SWEEP_AZIMUTH_DEG,
+    print("\n[Step 7] Reprojection residuals of the best custom candidate")
+    projected = project_points(
+        scene["R_custom"], scene["t_custom"], camera.K, object_points
     )
-    plot_path = plot_viewpoint_sweep(results, output_directory / "viewpoint_sweep.png")
-    csv_path = write_viewpoint_sweep_csv(results, output_directory / "viewpoint_sweep.csv")
-    print("\nViewpoint sweep")
-    print(f"  wrote {plot_path}")
-    print(f"  wrote {csv_path}")
-    print(
-        "  candidate-2 RMSE: "
-        f"{results[0].candidate_rmse_px[1]:.6g} px at {results[0].viewing_angle_deg:g}° "
-        f"→ {results[-1].candidate_rmse_px[1]:.6g} px at {results[-1].viewing_angle_deg:g}°"
-    )
-
-
-def _run_monte_carlo(output_directory: Path) -> None:
-    """Run and persist the configured empirical-versus-Jacobian noise study."""
-    summaries = run_monte_carlo_experiment(
-        make_camera(),
-        make_square_marker(),
-        config.SWEEP_RADIUS_M,
-        config.MONTE_CARLO_VIEWING_ANGLES_DEG,
-        config.CORNER_NOISE_STD_PX,
-        config.MONTE_CARLO_TRIALS,
-        config.MONTE_CARLO_SEED,
-        config.SWEEP_AZIMUTH_DEG,
-    )
-    plot_path = plot_monte_carlo_comparison(summaries, output_directory / "monte_carlo_variance.png")
-    csv_path = write_monte_carlo_csv(summaries, output_directory / "monte_carlo_summary.csv")
-    print("\nMonte Carlo (independent Gaussian noise per image coordinate)")
-    print(f"  wrote {plot_path}")
-    print(f"  wrote {csv_path}")
-    for summary in summaries:
+    print("  corner   u_obs      v_obs      u_proj     v_proj      du (px)      dv (px)")
+    for index, (observed, estimated) in enumerate(zip(image_points, projected)):
         print(
-            f"  {summary.viewing_angle_deg:g}°: sigma_min={summary.smallest_singular_value:.6g}, "
-            f"cond(J)={summary.condition_number:.6g}"
+            f"  {index:<8} {observed[0]:8.3f}   {observed[1]:8.3f}   "
+            f"{estimated[0]:8.3f}   {estimated[1]:8.3f}   "
+            f"{estimated[0] - observed[0]:+10.3e}   {estimated[1] - observed[1]:+10.3e}"
         )
-        print("    empirical variance:", np.array2string(summary.empirical_variance, precision=4))
-        print("    predicted variance:", np.array2string(summary.predicted_variance, precision=4))
+    print(f"  RMSE over the 8 scalar residuals = {scene['reprojection_error_custom']:.6g} px")
 
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", action="store_true", help="run the noiseless custom/OpenCV validation")
-    parser.add_argument("--sweep", action="store_true", help="run the viewpoint sweep and save its plot")
-    parser.add_argument("--monte-carlo", action="store_true", help="run the Gaussian-noise study and save its plot")
-    parser.add_argument("--all", action="store_true", help="run the baseline and both experiments")
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path(config.OUTPUT_DIRECTORY),
-        help=f"directory for generated plots and CSV files (default: {config.OUTPUT_DIRECTORY})",
+    print("\n[Validation] custom vs OpenCV primary solution")
+    rotation_error, translation_error = pose_error(
+        scene["R_custom"], scene["t_custom"], scene["R_cv"], scene["t_cv"]
     )
-    return parser.parse_args()
+    print(f"  difference: {rotation_error:.6g} deg, {translation_error:.6g} mm")
+    validate_noiseless_scene(scene)
+    print("  OK: the custom solver matches OpenCV within tolerance.")
 
 
 def main() -> None:
-    """Run the requested synthetic validation workflow."""
-    args = _parse_args()
-    run_baseline = args.baseline or args.all or not (args.sweep or args.monte_carlo)
-    run_sweep = args.sweep or args.all
-    run_monte_carlo = args.monte_carlo or args.all
-    if run_baseline:
-        _print_baseline(generate_scene())
-    if run_sweep or run_monte_carlo:
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-    if run_sweep:
-        _run_sweep(args.output_dir)
-    if run_monte_carlo:
-        _run_monte_carlo(args.output_dir)
+    """Run the pipeline on the scene described by config.py."""
+    _print_baseline(generate_scene())
 
 
 if __name__ == "__main__":
