@@ -16,7 +16,8 @@ from pathlib import Path
 import numpy as np
 
 import config
-from geometry import Camera, make_camera, make_square_marker
+from geometry.camera import Camera, make_camera
+from geometry.marker import make_square_marker
 from ippe_square import ippe_square
 from jacobian import analyze_jacobian, so3_log
 from viewpoint import make_front_arc_pose, project_scene

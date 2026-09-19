@@ -8,11 +8,12 @@ from pathlib import Path
 
 import numpy as np
 
-from camera import make_camera
-from experiments import plot_viewpoint_sweep, run_monte_carlo, run_viewpoint_sweep
+from geometry.camera import make_camera
+from geometry.marker import make_square_marker, transform_points
+from experiment1 import plot_viewpoint_sweep, run_viewpoint_sweep
+from experiment2 import run_monte_carlo
 from ippe_square import ippe_square
 from jacobian import analyze_jacobian, perturb_pose, reprojection_jacobian, reprojection_residuals
-from marker import make_square_marker, transform_points
 from pipeline import generate_scene, make_ground_truth_pose, pose_error, validate_noiseless_scene
 
 

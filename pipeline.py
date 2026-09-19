@@ -14,7 +14,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 import config
-from geometry import make_camera, make_square_marker, transform_points
+from geometry.camera import make_camera
+from geometry.marker import make_square_marker, transform_points
 from ippe_square import ippe_square, project_points
 
 

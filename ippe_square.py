@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from camera import Camera
+from geometry.camera import Camera
 
 
 def _validate_ippe_square_inputs(

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from camera import Camera
+from geometry.camera import Camera
 
 
 def skew(vector: np.ndarray) -> np.ndarray:
