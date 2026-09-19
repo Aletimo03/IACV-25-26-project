@@ -52,8 +52,8 @@ GT_TRANSLATION_Z_M = 0.50         # distance in front of the camera
 
 SWEEP_RADIUS_M = 0.50
 SWEEP_MIN_ANGLE_DEG = 0.0
-SWEEP_MAX_ANGLE_DEG = 75.0
-SWEEP_SAMPLES = 61
+SWEEP_MAX_ANGLE_DEG = 89.0
+SWEEP_SAMPLES = 90                 # one view per degree: 0, 1, ..., 89
 SWEEP_AZIMUTH_DEG = 0.0
 
 
