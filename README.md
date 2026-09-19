@@ -1,16 +1,18 @@
 # IACV 2025/26 — Synthetic IPPE-square pose estimation
 
-This project reimplements the central geometric ideas behind OpenCV's
-`SOLVEPNP_IPPE_SQUARE` in a fully synthetic setting. It uses only known
-marker-corner 3D–2D correspondences: there is no image capture, marker
-detection, distortion, or image-processing stage.
+A from-scratch reimplementation of the ideas behind OpenCV's
+`SOLVEPNP_IPPE_SQUARE`, in a fully synthetic setting: the 3D–2D corner
+correspondences are generated mathematically, so there is no image capture, no
+marker detection, no lens distortion and no image processing anywhere in the
+project.
 
-The custom solver estimates the two planar IPPE pose candidates. OpenCV is
-used only as a reference for the noiseless validation experiment.
+Our solver returns **both** planar IPPE pose candidates, unrefined. OpenCV is
+used only once, as an external reference for the noiseless validation in
+`pipeline.py`; nothing else in the project depends on it.
 
 ## Install
 
-Use Python 3.10 or newer.
+Python 3.10 or newer.
 
 ```bash
 python -m venv .venv
@@ -21,70 +23,130 @@ python -m pip install -r requirements.txt
 
 ## Run
 
+There are three independent entry points, one per deliverable.
+
 ```bash
-# Noiseless custom-versus-OpenCV validation and Jacobian diagnostics
-python pipeline.py
-
-# 61-view front-facing camera sweep; writes PNG and CSV results
-python pipeline.py --sweep
-
-# 1,000 noisy trials at 5° and 60°; writes variance comparison PNG and CSV
-python pipeline.py --monte-carlo
-
-# Run all project experiments
-python pipeline.py --all
+python pipeline.py       # steps 1-7 on one scene, prints every intermediate value
+python experiment1.py    # viewpoint sweep: the two-candidate ambiguity
+python experiment2.py    # Jacobian conditioning and Monte Carlo (work in progress)
 ```
 
-Outputs are saved under `outputs/` by default (or set another location with
-`--output-dir PATH`). The directory is intentionally ignored by Git.
+Plots and CSV files go to `outputs/`, which is not tracked by Git. Both
+experiments accept `--output-dir PATH`.
 
-Run the regression suite with the standard library test runner:
+Tests:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-## Geometry and conventions
-
-- The camera frame is right-handed: +X right, +Y down, +Z forward.
-- The pose maps marker coordinates to camera coordinates:
-  `P_cam = R @ P_marker + t`.
-- The centred square lies on marker `Z=0`; its required OpenCV order is
-  `[-L/2,+L/2,0]`, `[+L/2,+L/2,0]`, `[+L/2,-L/2,0]`,
-  `[-L/2,-L/2,0]`.
-- The configured Euler sequence is SciPy lower-case `xyz`: extrinsic
-  fixed-axis rotations. Estimation itself uses matrices and local rotation
-  vectors, not Euler angles.
-- The residual Jacobian has shape `(8, 6)` and parameter order
-  `[t_x, t_y, t_z, omega_x, omega_y, omega_z]`. Its rotation increment is
-  local and right-multiplied: `R_new = R @ exp([delta_omega]_x)`.
-- Translation units are metres and rotation units are radians. Therefore the
-  Jacobian singular values and condition number depend on this declared state
-  scaling.
-
-## Experiments
-
-`--sweep` moves a camera on a fixed-radius, front-facing 0°–75° arc while
-keeping it aimed at the marker centre. For every view, it keeps both custom
-IPPE hypotheses and plots their OpenCV-compatible reprojection RMSE.
-
-`--monte-carlo` adds independent zero-mean Gaussian noise to each image
-corner coordinate, repeatedly solves the pose, and compares the empirical
-local-pose covariance to the first-order prediction
-`sigma_px^2 (J.T @ J)^-1` at near-frontal (5°) and oblique (60°) views.
-
-All scene and experiment defaults live in `config.py`.
-
 ## Module layout
 
 | File | Responsibility |
 |---|---|
-| `camera.py` | Calibrated pinhole projection and normalization |
-| `marker.py` | Canonical square geometry and rigid transforms |
-| `ippe_square.py` | From-scratch two-candidate IPPE-square solver |
-| `jacobian.py` | Residual Jacobian, SVD diagnostics, covariance prediction |
-| `experiments.py` | Viewpoint sweep, Monte Carlo study, plots, and CSV output |
-| `pipeline.py` | Scene creation, OpenCV reference validation, and CLI |
-| `tests/` | Geometry, solver, Jacobian, and experiment regressions |
+| `config.py` | Every setting of the synthetic scene and of the experiments. Values only, no logic |
+| `geometry/` | The scene objects; imported as `from geometry.camera import ...` (no `__init__.py`, it is a namespace package) |
+| `geometry/camera.py` | Pinhole camera: `K`, projection, and normalization with `K_inv` |
+| `geometry/marker.py` | The canonical square and the rigid transform `R @ P + t` |
+| `ippe_square.py` | The solver: DLT homography, IPPE construction, linear translation |
+| `viewpoint.py` | Camera placement on an arc, parametrised by radius, viewing angle and azimuth |
+| `jacobian.py` | Reprojection Jacobian, SVD diagnostics, covariance prediction |
+| `pipeline.py` | Steps 1-7: builds the scene, solves it, checks against OpenCV and ground truth |
+| `experiment1.py` | Sweeps the viewpoint, keeps both candidates, writes plot and CSV |
+| `experiment2.py` | Conditioning per viewpoint plus the Monte Carlo noise study |
+| `tests/` | Regression tests for geometry, solver, Jacobian and experiments |
+| `report.tex` | The report (LaTeX, compiles with pdfLaTeX; see `figures/`) |
 
+Dependency direction: `config` → `geometry` → `ippe_square` / `jacobian` /
+`viewpoint` → `pipeline` / `experiment1` / `experiment2`. Nothing imports an
+entry point, so the three can run in any order.
 
+## The pipeline (`pipeline.py`)
+
+Running it walks through the seven steps on the scene described by `config.py`
+and prints each intermediate quantity: the marker corners in metres, the
+intrinsics, the ground-truth rotation matrix, the marker normal in the camera
+frame, the viewing angle, the camera-frame coordinates and pixel of every
+corner, both candidate poses from both solvers, and a per-corner residual table.
+
+Notes on the implementation:
+
+- **`make_ground_truth_pose` composes the Euler angles with a 180° flip about
+  X.** Without it, small Euler angles would describe a marker whose normal
+  points *away* from the camera, i.e. seen from behind. With the flip, the
+  three angles in `config.py` mean what their comments say: a tilt away from
+  the fronto-parallel view of a marker facing the camera, as a detected ArUco
+  marker always is.
+- **The solver validates its inputs.** `IPPE_SQUARE` is not a generic coplanar
+  solver: it assumes the canonical centred square in a specific corner order.
+  Anything else is rejected rather than silently turned into a meaningless
+  pose.
+- **Both candidates are returned, and neither is refined.** A free nonlinear
+  refinement can pull both starting points to the same pose, which would hide
+  the ambiguity that experiment 1 is about. The price is a difference from
+  OpenCV in the fifth digit on the mirror candidate, since OpenCV does refine.
+- **`generate_scene()` contains no Jacobian and no experiment code.** Steps 1-7
+  and the two studies are kept apart on purpose.
+
+On the default scene the primary candidate matches the ground truth to about
+`1e-13` mm, with per-corner residuals near machine precision, and agrees with
+OpenCV to the same order.
+
+## Experiment 1 (`experiment1.py`)
+
+The camera slides along an arc around the marker, always aimed at its centre,
+one viewpoint per degree from 0° (fronto-parallel) to 89° (nearly edge-on). At
+each viewpoint the solver runs and **both** candidates are kept, with their
+reprojection error and their error against the ground truth.
+
+- The arc has a single free parameter: azimuth and radius are fixed in
+  `config.py` (0° and 0.5 m).
+- No noise is added — the image points are the exact projections.
+- Outputs: `outputs/viewpoint_sweep.png` and `outputs/viewpoint_sweep.csv`
+  (90 rows: angle, both RMSEs, both pose errors, and two conditioning columns).
+- `figures/viewpoint_sweep.png` is a tracked copy of the plot for the report.
+  Refresh it when you rerun the sweep.
+
+What comes out of it: the two candidates are identical head-on and separate as
+the view becomes oblique, the wrong one being exactly twice the viewing angle
+away in 3D while its image moves far more slowly. The curve flattens past 75°.
+The report discusses this in section 3.
+
+Two things to know about the code:
+
+- `run_viewpoint_sweep` takes a `noise_std_px` argument but **does not add
+  noise**; it only passes the value to `analyze_jacobian` to fill the two
+  conditioning columns in the CSV.
+- Candidates are sorted by reprojection error, so the plot labels them
+  "candidate 1 (best)" and "candidate 2". Without noise the best one is always
+  the true pose; with noise that would stop being true, and the labels would
+  need to become "true" and "mirror".
+
+## Experiment 2 (`experiment2.py`)
+
+Work in progress. It currently computes the 8×6 Jacobian per viewpoint with its
+singular values and condition number, then runs 1,000 noisy trials at 5° and
+60° and compares the measured covariance with the first-order prediction.
+
+Known gap: the prediction assumes a least-squares estimator, whereas the trials
+re-solve with raw IPPE, which is algebraic and unrefined. The two agree well at
+60° and not at 5°. Adding a Gauss-Newton refinement on top of IPPE is the next
+step.
+
+## Conventions
+
+- Camera frame: +X right, +Y down, +Z forward. The pose maps marker to camera,
+  `P_cam = R @ P_marker + t`.
+- The square lies on marker `Z=0`, centred, in OpenCV's order:
+  `[-L/2,+L/2,0]`, `[+L/2,+L/2,0]`, `[+L/2,-L/2,0]`, `[-L/2,-L/2,0]`
+  (clockwise seen from +Z).
+- Euler angles use SciPy's lower-case `xyz`, i.e. extrinsic fixed-axis
+  rotations. They only *describe* the scene; estimation uses rotation matrices
+  and local rotation vectors.
+- **Viewing angle** always means the angle between the marker normal and the
+  line from the marker to the camera: 0° is fronto-parallel, above 90° means
+  the marker is seen from behind.
+- Reprojection RMSE follows OpenCV's convention, averaging over the eight
+  scalar residuals rather than the four corners.
+- Lengths are metres and angles radians in the code, degrees only when printed.
+  The Jacobian's condition number depends on that choice of units.

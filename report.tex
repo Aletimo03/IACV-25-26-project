@@ -1,20 +1,56 @@
 % ============================================================
-%  IACV 2025/26 Project — Synthetic Pose Estimation Pipeline
-%  Geometry, IPPE-square, and conditioning experiments
-%  Ready to compile on Overleaf (pdfLaTeX).
+%  IACV 2025/26 Project --- Synthetic IPPE-Square Pose Estimation
+%  Geometry, two-pose ambiguity, and conditioning experiments
+%  Compile with pdfLaTeX. Figures are looked up in figures/ then outputs/.
 % ============================================================
-\documentclass[11pt]{article}
+\documentclass[11pt,a4paper]{article}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{amsmath, amssymb, amsthm, mathtools}
-\usepackage{bm}
-\usepackage[margin=2.4cm]{geometry}
-\usepackage{xcolor}
-\usepackage{hyperref}
-\usepackage{enumitem}
+\usepackage[english]{babel}
+\usepackage[expansion=false]{microtype}
+\usepackage[a4paper,margin=2.6cm]{geometry}
+\usepackage{fancyhdr,titlesec,enumitem,parskip}
+\setlength{\parskip}{0.5\baselineskip}
+\setlength{\headheight}{22pt}
+\usepackage{amsmath,amssymb,amsthm,mathtools,bm}
+\usepackage{booktabs,array,tabularx,caption,graphicx,placeins}
+\usepackage[table]{xcolor}
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{accent2}{HTML}{2E75B6}
+\definecolor{lightbg}{HTML}{F2F6FA}
+\definecolor{greytext}{HTML}{595959}
+\usepackage[colorlinks=true,linkcolor=accent,citecolor=accent,urlcolor=accent2]{hyperref}
+\usepackage{xurl}
+\hypersetup{pdftitle={Synthetic IPPE-Square Pose Estimation},
+  pdfsubject={IACV project: planar pose estimation, two-pose ambiguity, and conditioning}}
+\urlstyle{tt}
 
-\hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black}
+\titleformat{\section}{\normalfont\Large\bfseries\color{accent}}
+  {\thesection}{0.6em}{}[{\color{accent}\titlerule[1pt]}]
+\titleformat{\subsection}{\normalfont\large\bfseries\color{accent2}}
+  {\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalfont\normalsize\bfseries\itshape\color{greytext!90!black}}
+  {\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.6em}{0.8em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.5em}
+\titlespacing*{\subsubsection}{0pt}{1em}{0.4em}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{accent}\leaders\hrule height\headrulewidth\hfill}}
+\fancyhead[L]{\small\color{greytext} IACV Project}
+\fancyhead[R]{\small\color{greytext} Synthetic IPPE-Square Pose Estimation}
+\fancyfoot[C]{\small\thepage}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+\newcommand{\code}[1]{\texttt{#1}}
+% Long identifiers: \texttt cannot hyphenate, so allow breaks after _ and (
+\newcommand{\flag}{\texttt{SOLVEPNP\allowbreak\_IPPE\allowbreak\_SQUARE}}
 
 % --- Notation shortcuts ---
 \newcommand{\R}{\mathbb{R}}
@@ -26,18 +62,68 @@
 \newcommand{\Pmark}{\mathbf{P}_{\text{mk}}}
 \newcommand{\KK}{\mathbf{K}}
 
-\title{Synthetic IPPE-Square Pose Estimation \\[0.3em]
-       \large Geometry, Two-Pose Ambiguity, and Conditioning}
-\author{IACV 2025/26 Project}
-\date{\today}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\thcell}[1]{\textcolor{white}{\textbf{#1}}}
+\captionsetup{font=small,labelfont=bf}
+\setlist[itemize]{itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{itemsep=2pt,topsep=3pt}
+\setlength{\emergencystretch}{2em}
+
+% Arguments: filename, description of the expected plot, caption, label.
+% The figure is searched in figures/ and then in outputs/, which is where
+% experiment1.py writes it and which is not tracked by Git.
+\newcommand{\resultfigure}[4]{%
+  \begin{figure}[h!]
+  \centering
+  \IfFileExists{figures/#1}{%
+    \includegraphics[width=0.88\linewidth,height=0.6\textheight,keepaspectratio]{figures/#1}%
+  }{%
+    \IfFileExists{outputs/#1}{%
+      \includegraphics[width=0.88\linewidth,height=0.6\textheight,keepaspectratio]{outputs/#1}%
+    }{%
+      \fcolorbox{accent2}{lightbg}{%
+        \begin{minipage}{0.89\linewidth}
+        \centering\vspace{0.7cm}
+        {\color{accent}\bfseries Figure pending}\par\medskip
+        #2\par\medskip
+        {\footnotesize Expected file: \texttt{\detokenize{#1}}}\par\smallskip
+        {\footnotesize Regenerate it by running the corresponding experiment script.}
+        \vspace{0.7cm}
+        \end{minipage}}
+    }%
+  }
+  \caption{#3}\label{#4}
+  \end{figure}%
+}
 
 \begin{document}
-\maketitle
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\color{accent2}\bfseries\large IACV 2025/26 PROJECT}\par
+\vspace{0.6cm}
+{\color{accent}\bfseries\Huge Synthetic IPPE-Square}\par
+\vspace{0.3cm}
+{\color{accent}\bfseries\Huge Pose Estimation}\par
+\vspace{0.8cm}
+{\color{greytext}\itshape\Large Technical Project Report}\par
+\vspace{0.5cm}
+{\color{greytext}\large Planar geometry, the two-pose ambiguity, and conditioning}\par
+\vspace{0.4cm}
+{\color{greytext} Mathematical foundations, implementation, and synthetic experiments}
+\vfill
+{\color{greytext}\large Author names\par}
+\vfill
+{\color{greytext} September 2026}
+\end{titlepage}
+
 \tableofcontents
-\vspace{1em}
+\thispagestyle{empty}
+\clearpage
 
 % ============================================================
-\paragraph{Overview}
+\section{Overview and Notation}
+\label{sec:overview}
 % ============================================================
 
 We synthesize the image a calibrated pinhole camera would observe of a
@@ -53,13 +139,16 @@ mathematically.
   \item Project the four 3D corners into the image.
   \item Recover both planar IPPE-square pose candidates from the correspondences.
   \item Compare the custom primary candidate to OpenCV's
-        \verb|SOLVEPNP_IPPE_SQUARE| in the noiseless case.
+        \flag{} in the noiseless case.
 \end{enumerate}
 
-The remaining experiments sweep the front-facing camera viewpoint and study
-the reprojection Jacobian under Gaussian pixel noise.
+Section~\ref{sec:pipeline} follows these seven steps in order. Two experiments
+then build on the finished pipeline: Section~\ref{sec:experiment1} sweeps the
+camera viewpoint and studies the two planar candidates, and
+Section~\ref{sec:experiment2} analyses the reprojection Jacobian and compares
+its uncertainty prediction with a Monte Carlo simulation.
 
-\subsection*{Notation}
+\subsection{Notation}
 \begin{itemize}[leftmargin=*]
   \item Vectors in bold lowercase: $\mathbf{t}$. Matrices in bold uppercase: $\mathbf{R}, \KK$.
   \item Points carry a subscript naming their frame:
@@ -70,8 +159,19 @@ the reprojection Jacobian under Gaussian pixel noise.
 \end{itemize}
 
 % ============================================================
-\section{Step 1 --- The 3D Marker Plane}
+\section{The Synthetic Pipeline}
+\label{sec:pipeline}
 % ============================================================
+
+Steps 1--5 build a scene and the image a calibrated camera would record of it;
+steps 6--7 recover the pose from that image and check the result. Each
+subsection below corresponds to one step of the list in
+Section~\ref{sec:overview} and to one stage of \code{pipeline.py}, which prints
+every intermediate quantity when run.
+
+% ------------------------------------------------------------
+\subsection{Step 1 --- The 3D Marker Plane}
+% ------------------------------------------------------------
 
 The marker is a flat object, so the four corners are coplanar. We attach a
 coordinate frame to the marker (the \emph{marker frame}) with the plane
@@ -96,13 +196,13 @@ collapse is the structural reason a single $3\times 3$ matrix --- a
 \emph{homography} --- captures all the geometry of a planar marker, which
 is what later pose-estimation steps will exploit.
 
-% ============================================================
-\section{Step 2 --- The Square on the Plane}
+% ------------------------------------------------------------
+\subsection{Step 2 --- The Square on the Plane}
 % ============================================================
 
 On the plane $Z = 0$ we place a square of side $L$, centered at the marker
 origin and axis-aligned to the marker frame. The four corner coordinates,
-in the order used by OpenCV's \verb|SOLVEPNP_IPPE_SQUARE|, are
+in the order used by OpenCV's \flag, are
 \begin{equation}
   \Pmark^{(0)} = \begin{pmatrix} -L/2 \\ +L/2 \\ 0 \end{pmatrix}, \;
   \Pmark^{(1)} = \begin{pmatrix} +L/2 \\ +L/2 \\ 0 \end{pmatrix}, \;
@@ -115,15 +215,17 @@ indicates the marker frame.
 \paragraph{Corner ordering matters.}
 The order of the 3D list must match the order of the 2D observations,
 otherwise the correspondences are scrambled and the algorithm finds the
-wrong pose (or fails). The order above (counter-clockwise starting at
-top-left, viewed from $+Z$) is the convention shared by OpenCV's ArUco
-detector and \verb|SOLVEPNP_IPPE_SQUARE|.
+wrong pose (or fails). The order above (clockwise starting at top-left, when
+the marker frame is drawn with $X$ right and $Y$ up and seen from $+Z$) is the
+convention shared by OpenCV's ArUco detector and \flag.
+The sign of the shoelace sum over the four corners is negative, which is the
+quick numerical check for this orientation.
 
-% ============================================================
-\section{Step 3 --- The Pinhole Camera}
+% ------------------------------------------------------------
+\subsection{Step 3 --- The Pinhole Camera}
 % ============================================================
 
-\subsection{Geometric model}
+\subsubsection{Geometric model}
 
 A pinhole camera maps points in the camera frame to points on a 2D image.
 The camera origin is at the world origin; the image plane sits at $Z = f$,
@@ -137,7 +239,7 @@ The division by $Z$ is the \emph{perspective divide}: it is the only
 non-linearity in the model and is responsible for foreshortening (farther
 objects look smaller).
 
-\subsection{The intrinsic matrix \texorpdfstring{$\KK$}{K}}
+\subsubsection{The intrinsic matrix \texorpdfstring{$\KK$}{K}}
 
 Real images are measured in pixels. The focal length is encoded as
 $f_x, f_y$ (in pixels, possibly different along the two axes if the pixel
@@ -162,7 +264,7 @@ so that the projection has the compact homogeneous form
 \end{equation}
 The first is a linear matrix product, the second is the perspective divide.
 
-\subsection{Normalized image coordinates}
+\subsubsection{Normalized image coordinates}
 
 Apply $\KK^{-1}$ to a pixel $\mathbf{p}$:
 \begin{equation}
@@ -179,8 +281,8 @@ length) and encode pure ray directions. Pose-estimation algorithms
 work in this representation so that the camera-specific quantities $\KK$
 do not contaminate the geometric reasoning.
 
-% ============================================================
-\section{Step 4 --- Ground-Truth Pose}
+% ------------------------------------------------------------
+\subsection{Step 4 --- Ground-Truth Pose}
 % ============================================================
 
 A point in the marker frame is brought into the camera frame by a
@@ -193,7 +295,7 @@ with $\mathbf{R} \in \SO{3}$ and $\mathbf{t} \in \R^3$. The pair
 $(\mathbf{R}, \mathbf{t})$ is an element of the Special Euclidean group
 $\SE{3}$, and is what we mean by \emph{pose}.
 
-\subsection{The rotation group \texorpdfstring{$\SO{3}$}{SO(3)}}
+\subsubsection{The rotation group \texorpdfstring{$\SO{3}$}{SO(3)}}
 
 A $3\times 3$ matrix $\mathbf{R}$ is a rotation if and only if
 \begin{equation}
@@ -212,7 +314,7 @@ $\mathbf{R}^\top \mathbf{R} = \mathbf{I}$ imposes $6$ independent constraints. T
 leaves \textbf{3 DOF} --- the minimum number of parameters needed to
 describe a rotation in 3D.
 
-\subsection{Representation 1: Euler angles}
+\subsubsection{Representation 1: Euler angles}
 
 Decompose any rotation as three elementary rotations around the coordinate
 axes. The code uses SciPy's lower-case \emph{extrinsic xyz} convention: the
@@ -232,28 +334,57 @@ axes align and one DOF is lost) and from non-unique decompositions. We use
 Euler angles only to \emph{specify} the ground-truth pose conveniently; we
 never use them for optimization.
 
-\subsection{Our concrete ground-truth pose}
+\subsubsection{Facing the camera}
+
+One detail is easy to miss. If $\mathbf{R} = \mathbf{I}$, the marker axes
+coincide with the camera axes, so the marker normal $+Z$ points \emph{into}
+the scene, away from the camera: we would be looking at the back of the
+marker. A marker that faces the camera, as a detected ArUco marker always
+does, is therefore near a $180^\circ$ rotation, not near the identity. We
+build the pose as
+\begin{equation}
+  \Rgt \;=\; \mathbf{R}(\alpha,\beta,\gamma)\, \mathbf{F},
+  \qquad
+  \mathbf{F} = \operatorname{diag}(1,-1,-1),
+  \label{eq:face-flip}
+\end{equation}
+where $\mathbf{F}$ is a $180^\circ$ rotation about $X$ (a proper rotation:
+$\det \mathbf{F} = +1$). Because $\mathbf{F}$ is applied first, in the marker
+frame, the Euler angles keep their intended meaning: a tilt away from the
+fronto-parallel view.
+
+\subsubsection{Our concrete ground-truth pose}
+\label{sec:gt-pose}
 
 In the code we choose
 \begin{align}
   \text{Euler (xyz, deg)} & : \quad (\alpha, \beta, \gamma) = (15,\,10,\,5) \\
   \tgt & : \quad (0.05,\, 0.02,\, 0.50)^\top \;\text{m}
 \end{align}
-which yields
+which, through \eqref{eq:face-flip}, yields
 \[
   \Rgt \approx
   \begin{pmatrix}
-    +0.9811 & -0.0394 & +0.1897 \\
-    +0.0858 & +0.9662 & -0.2432 \\
-    -0.1736 & +0.2549 & +0.9513
+    +0.9811 & +0.0394 & -0.1897 \\
+    +0.0858 & -0.9662 & +0.2432 \\
+    -0.1736 & -0.2549 & -0.9513
   \end{pmatrix}.
 \]
-Note that the total rotation angle ($\approx 18.33^\circ$) is
-\emph{not} $15^\circ + 10^\circ + 5^\circ$ because Euler rotations do not
-compose by simple addition.
+The Euler part alone rotates by $\approx 18.33^\circ$, which is \emph{not}
+$15^\circ + 10^\circ + 5^\circ$ because Euler rotations do not compose by
+simple addition. The third column of $\Rgt$ is the marker normal expressed in
+the camera frame, $(-0.190,\, 0.243,\, -0.951)^\top$; its negative $Z$
+component confirms that the normal points back towards the camera.
 
-% ============================================================
-\section{Step 5 --- Forward Projection}
+\paragraph{Viewing angle.} Throughout this report the \emph{viewing angle} is
+the angle between the marker normal and the line from the marker centre to the
+camera centre: $0^\circ$ is fronto-parallel, and a value above $90^\circ$
+would mean we are looking at the back of the marker. For the pose above it is
+$17.26^\circ$, so the baseline scene is a mildly oblique but ordinary view,
+directly comparable with the sweep of Section~\ref{sec:experiment1}.
+
+% ------------------------------------------------------------
+\subsection{Step 5 --- Forward Projection}
 % ============================================================
 
 Steps 1--4 fix all the inputs. Step 5 chains them into the observed image
@@ -290,33 +421,406 @@ where the projection $\pi:\R^3 \to \R^2$ is the perspective divide
         like a perspective-warped square.
 \end{itemize}
 
-% ============================================================
-\section{IPPE-Square Pose Recovery and Validation}
-% ============================================================
+% ------------------------------------------------------------
+\subsection{Step 6 --- IPPE-Square Pose Recovery}
+\label{sec:ippe}
+% ------------------------------------------------------------
 
 The marker is planar, so its normalized-image projection is a homography
 \begin{equation}
   \begin{pmatrix} x_n \\ y_n \\ 1 \end{pmatrix}
   \sim \mathbf{H}\begin{pmatrix} X \\ Y \\ 1 \end{pmatrix}.
 \end{equation}
-The custom solver estimates $\mathbf{H}$ by DLT, evaluates its quotient-rule
-Jacobian at the square centre, and applies the IPPE construction to obtain two
-rotation candidates. Translation is then estimated linearly for each fixed
-rotation. The two candidates are kept unpolished and ranked by pixel RMSE:
-an unrestricted nonlinear refinement may converge both starts to the same
-pose and incorrectly hide the planar ambiguity.
+Our solver is written from scratch in \code{ippe\_square.py} and never calls
+OpenCV. It follows the planar-homography formulation of IPPE, and this section
+describes what the implementation actually computes, function by function.
 
-The custom implementation is compared in the noiseless synthetic scene with
-OpenCV's \verb|solvePnPGeneric(..., SOLVEPNP_IPPE_SQUARE)|. Both use the same
-canonical centred-square point order. OpenCV is a reference only; the custom
-solver itself has no OpenCV dependency.
+\subsubsection{Input validation}
+
+\code{IPPE\_SQUARE} is not a generic coplanar solver: it assumes the four
+object points are the centred square of Step 2, in that exact order. Feeding it
+a different layout still produces a pose, only a meaningless one. The solver
+therefore first checks that the points are finite, lie on $Z=0$, and match the
+canonical square of side $L = \|\Pmark^{(1)} - \Pmark^{(0)}\|$, and refuses
+anything else.
+
+\subsubsection{From pixels to a homography}
+
+Pixels are first mapped to normalized coordinates with $\KK^{-1}$, so the
+intrinsics disappear from everything that follows. The homography is then
+estimated by the standard DLT: each correspondence $\big((X,Y),(x_n,y_n)\big)$
+contributes two rows to a $8\times9$ design matrix, and $\mathbf{H}$ is read off
+the right singular vector of its smallest singular value. The homogeneous
+scale is fixed by dividing by $h_{33}$, which is safe here because the square is
+centred at the origin and lies in front of the camera.
+
+\subsubsection{The two quantities IPPE needs}
+
+IPPE is a \emph{local} method: it uses the homography only through its value
+and its first derivative at one point, here the square centre $(X,Y)=(0,0)$.
+Since the centre is the origin, its normalized projection is read directly
+off the last column,
+\begin{equation}
+  \mathbf{v} = (h_{13},\, h_{23})^\top ,
+\end{equation}
+and the derivative follows from the quotient rule applied to
+$x_n(X,Y) = (h_{11}X + h_{12}Y + h_{13})/(h_{31}X + h_{32}Y + 1)$, evaluated at
+the origin:
+\begin{equation}
+  \mathbf{J}_{\mathbf H} =
+  \begin{pmatrix}
+    h_{11} - h_{13}h_{31} & h_{12} - h_{13}h_{32} \\
+    h_{21} - h_{23}h_{31} & h_{22} - h_{23}h_{32}
+  \end{pmatrix}.
+  \label{eq:homography-jacobian}
+\end{equation}
+
+\subsubsection{The IPPE construction}
+
+Let $\mathbf{R}_{\mathbf v}$ be the smallest rotation taking $\mathbf{e}_3$ onto
+$(\mathbf{v},1)^\top$, computed in closed form by Rodrigues' formula. Working in
+the frame it defines removes the effect of the marker being off the optical
+axis. Writing
+\begin{equation}
+  \mathbf{B} =
+  \begin{pmatrix} 1 & 0 & -v_1 \\ 0 & 1 & -v_2 \end{pmatrix}
+  \big[\mathbf{R}_{\mathbf v}\big]_{:,1:2},
+  \qquad
+  \mathbf{A} = \mathbf{B}^{-1}\mathbf{J}_{\mathbf H},
+\end{equation}
+the matrix $\mathbf{A}$ is, up to scale, the upper-left $2\times2$ block of the
+rotation we are looking for. Its largest singular value $\gamma$ supplies that
+scale, and we set $\mathbf{R}_{2\times2} = \mathbf{A}/\gamma$.
+
+The rotation is then completed column by column. Orthonormality forces
+\begin{equation}
+  \mathbf{b}\,\mathbf{b}^\top
+  = \mathbf{I} - \mathbf{R}_{2\times2}^\top\mathbf{R}_{2\times2},
+  \label{eq:rank-one}
+\end{equation}
+whose right-hand side is positive semidefinite of rank one; $\mathbf{b}$ is
+recovered from its largest eigenpair. The remaining entries come from the
+cross product of the first two columns, which must be the third. Both signs of
+$\mathbf{b}$ satisfy \eqref{eq:rank-one}, and this is precisely where the
+planar ambiguity enters: the two candidates are
+\begin{equation}
+  \mathbf{R}^{\pm} = \mathbf{R}_{\mathbf v}
+  \begin{pmatrix}
+    \mathbf{R}_{2\times2} & \pm\mathbf{c} \\[2pt]
+    \pm\mathbf{b}^\top & a
+  \end{pmatrix},
+\end{equation}
+with $(\mathbf{c},a)$ obtained from that cross product. At a fronto-parallel
+view the right-hand side of \eqref{eq:rank-one} vanishes, so $\mathbf{b} =
+\mathbf{0}$ and the two candidates collapse into one; Section~\ref{sec:experiment1}
+returns to this.
+
+\subsubsection{Translation, ranking, and the decision not to refine}
+
+With a rotation fixed, translation is linear. Each corner requires its camera
+ray $\mathbf{q}^{(i)} = (x_n^{(i)}, y_n^{(i)}, 1)^\top$ to be parallel to the
+transformed point, that is
+\begin{equation}
+  \mathbf{q}^{(i)} \times \big(\mathbf{R}\,\Pmark^{(i)} + \mathbf{t}\big)
+  = \mathbf{0}
+  \quad\Longleftrightarrow\quad
+  [\mathbf{q}^{(i)}]_\times\,\mathbf{t}
+  = -[\mathbf{q}^{(i)}]_\times\,\mathbf{R}\,\Pmark^{(i)} .
+\end{equation}
+Stacking all four corners gives a $12\times3$ system, solved in the
+least-squares sense. Only two of the three rows per corner are independent, but
+keeping all of them is numerically harmless and avoids forming a normal-equation
+inverse by hand.
+
+Both candidates are then reprojected, ranked by pixel RMSE, and returned
+together. We deliberately apply \emph{no} nonlinear refinement: an
+unconstrained optimization started from the two candidates can pull both to the
+same pose, which would erase the very ambiguity Experiment 1 sets out to
+measure. The price is a slight difference from OpenCV on the mirror candidate,
+quantified in Section~\ref{sec:step7}.
+
+\subsubsection{Reference implementation}
+
+The result is compared, in the same noiseless scene, with OpenCV's
+\code{solvePnPGeneric} called with the \flag{} flag, using the same canonical
+point order. OpenCV serves only as an external reference: no part of the solver
+depends on it.
+
+% ------------------------------------------------------------
+\subsection{Step 7 --- Validation Against OpenCV and the Ground Truth}
+\label{sec:step7}
+% ------------------------------------------------------------
+
+Table~\ref{tab:baseline} collects the four poses returned for the pose of
+Section~\ref{sec:gt-pose}. The primary candidate reproduces the ground truth to machine
+precision, and the per-corner residuals are of order $10^{-13}$ px, so the
+solver is exact in the noiseless case rather than merely accurate.
+
+\begin{table}[h!]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}YYrrr@{}}
+\toprule
+\rowcolor{accent}\thcell{Candidate}&\thcell{Solver}&\thcell{RMSE (px)}&\thcell{Rot.\ error ($^\circ$)}&\thcell{Transl.\ error (mm)}\\
+\midrule
+1&custom&$6.4\cdot10^{-14}$&$0$&$2.8\cdot10^{-13}$\\
+\rowcolor{lightbg} 2&custom&$3.33836$&$34.521$&$3.074$\\
+1&OpenCV&$2.2\cdot10^{-14}$&$0$&$1.1\cdot10^{-13}$\\
+\rowcolor{lightbg} 2&OpenCV&$3.33825$&$34.521$&$3.101$\\
+\bottomrule
+\end{tabularx}
+\caption{Baseline scene: both IPPE-square candidates from the custom solver and
+from OpenCV, each compared with the ground-truth pose.}
+\label{tab:baseline}
+\end{table}
+
+Two observations are worth making. First, the two solvers agree on the primary
+pose to $10^{-13}$ mm, which validates the custom implementation. Second, the
+mirror candidate is $34.52^\circ$ away from the ground truth, that is exactly
+twice the $17.26^\circ$ viewing angle of the scene; Section~\ref{sec:experiment1}
+shows this is not a coincidence. The small residual gap between the two
+solvers on the mirror candidate ($3.33836$ against $3.33825$ px) comes from
+the internal refinement OpenCV applies and we deliberately do not.
 
 % ============================================================
-\section{Jacobian and Uncertainty Analysis}
+\section{Experiment 1 --- The Two-Pose Ambiguity}
+\label{sec:experiment1}
 % ============================================================
 
-Let $\mathbf{r}$ stack the eight scalar pixel residuals of the four corners.
-For a local pose increment ordered as
+A planar marker admits two poses that explain the same image almost equally
+well. This experiment measures \emph{how} equally, as a function of the viewing
+angle: when the two candidates are easy to tell apart, and when they are not.
+
+% ------------------------------------------------------------
+\subsection{The quantity we plot}
+\label{sec:rmse}
+% ------------------------------------------------------------
+
+Everything below is measured with the reprojection error, so it is worth
+stating exactly what that number is. Given an estimated pose
+$(\mathbf{R},\mathbf{t})$, we project the four known corners again and compare
+them with the observed pixels. Each corner contributes a two-component
+residual,
+\begin{equation}
+  \mathbf{e}^{(i)}
+  = \underbrace{\pi\!\big(\KK(\mathbf{R}\,\Pmark^{(i)} + \mathbf{t})\big)}
+    _{\text{where the pose says corner } i \text{ should be}}
+  \;-\;
+  \underbrace{\mathbf{p}^{(i)}}_{\text{where it is observed}}
+  \;=\;
+  \begin{pmatrix} \Delta u^{(i)} \\ \Delta v^{(i)} \end{pmatrix},
+  \label{eq:residual}
+\end{equation}
+so four corners give $2N = 8$ scalar residuals in total. Summing their squares
+gives the reprojection cost itself,
+\begin{equation}
+  E(\mathbf{R},\mathbf{t}) = \sum_{i=1}^{N}\|\mathbf{e}^{(i)}\|^2
+  = \sum_{i=1}^{N}\Big[(\Delta u^{(i)})^2+(\Delta v^{(i)})^2\Big],
+  \label{eq:cost}
+\end{equation}
+which is the quantity Section~\ref{sec:experiment2} minimizes. What we plot is
+its root mean square,
+\begin{equation}
+  \boxed{\quad
+  \mathrm{RMSE}
+  =\sqrt{\frac{E(\mathbf{R},\mathbf{t})}{2N}}
+  =\sqrt{\frac{1}{2N}\sum_{i=1}^{N}
+    \Big[(\Delta u^{(i)})^2+(\Delta v^{(i)})^2\Big]}\,,
+  \qquad N = 4 .
+  \quad}
+  \label{eq:rmse}
+\end{equation}
+
+\paragraph{Why not just $E$?} The two carry the same information, since
+$\mathrm{RMSE}=\sqrt{E/2N}$ is a monotone function of $E$, but they are not
+equally readable. The cost $E$ is measured in squared pixels and grows with the
+number of corners, so a value of $89$ says nothing on its own. Taking the mean
+and then the square root undoes both effects: the result is in \emph{pixels},
+it does not depend on how many points were used, and it answers a concrete
+question --- \emph{if this pose were the true one, by how many pixels would a
+corner coordinate be misplaced?} That also makes it directly comparable with
+the corner noise $\sigma_{px}$, which is the comparison the discussion below
+rests on. A perfect pose gives zero either way.
+
+\begin{remark}
+The normalization is by $2N$, the number of scalar residuals, not by $N$, the
+number of corners. This is the convention OpenCV reports, so our numbers and
+its own are directly comparable; an RMSE of Euclidean per-corner distances
+would be a factor $\sqrt2$ larger.
+\end{remark}
+
+% ------------------------------------------------------------
+\subsection{Setup}
+% ------------------------------------------------------------
+
+The camera centre moves on an arc of fixed radius $r = 0.5$ m around the
+marker, always aimed at the marker centre, sampling one viewpoint per degree
+from $0^\circ$ (fronto-parallel) to $89^\circ$ (almost edge-on). No noise is
+added: the image points are the exact projections. At each viewpoint we solve
+with our own IPPE implementation of Section~\ref{sec:ippe}, keep \emph{both}
+candidates, and record the reprojection RMSE and the pose error of each. Using
+our solver rather than OpenCV is what makes the experiment possible at all:
+both candidates are returned unrefined, so neither is silently discarded.
+
+\paragraph{One arc, not a hemisphere.} The camera path has a single free
+parameter. Both the azimuth, fixed at $0^\circ$, and the radius, fixed at
+$0.5$ m, are held constant, so the camera slides along one meridian rather than
+covering the whole front hemisphere. The square is symmetric under
+$90^\circ$ in-plane rotations, so other azimuths mainly relabel the corners and
+give equivalent curves; the radius, by contrast, changes the apparent size of
+the marker and therefore the scale of the reprojection errors. The results
+below should be read as belonging to this configuration.
+
+% ------------------------------------------------------------
+\subsection{Results}
+% ------------------------------------------------------------
+
+Figure~\ref{fig:sweep} shows the two curves. The true pose (candidate 1) sits
+at $\approx 10^{-13}$ px everywhere, as it must without noise. The mirror pose
+(candidate 2) starts at zero and grows monotonically to $12.15$ px.
+
+\resultfigure{viewpoint_sweep.png}
+ {Reprojection RMSE of the true and mirror candidates against the viewing angle.}
+ {Reprojection RMSE of the two IPPE-square candidates against the viewing
+ angle, one sample per degree.}
+ {fig:sweep}
+
+\begin{table}[h!]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}Yrr@{}}
+\toprule
+\rowcolor{accent}\thcell{Viewing angle ($^\circ$)}&\thcell{Mirror RMSE (px)}&\thcell{Mirror rot.\ error ($^\circ$)}\\
+\midrule
+0&$0.000$&$0$\\
+\rowcolor{lightbg} 1&$0.197$&$2$\\
+5&$0.987$&$10$\\
+\rowcolor{lightbg} 15&$2.939$&$30$\\
+30&$5.736$&$60$\\
+\rowcolor{lightbg} 45&$8.241$&$90$\\
+60&$10.282$&$120$\\
+\rowcolor{lightbg} 75&$11.659$&$150$\\
+89&$12.153$&$178$\\
+\bottomrule
+\end{tabularx}
+\caption{How the mirror candidate separates from the true pose, in the image
+and in pose space. The rotation error is exactly twice the viewing angle at
+every sampled point.}
+\label{tab:sweep}
+\end{table}
+
+% ------------------------------------------------------------
+\subsection{Discussion}
+% ------------------------------------------------------------
+
+\subsubsection{Why the two poses coincide at $0^\circ$}
+
+The collapse is visible directly in the algebra of Section~\ref{sec:ippe}. The
+two candidates differ only through the vector $\mathbf{b}$, recovered from
+\eqref{eq:rank-one},
+\begin{equation}
+  \mathbf{b}\,\mathbf{b}^\top
+  = \mathbf{I} - \mathbf{R}_{2\times2}^\top \mathbf{R}_{2\times2},
+\end{equation}
+so everything hinges on how far $\mathbf{R}_{2\times2}$ is from being
+orthogonal. At a fronto-parallel view the marker plane is parallel to the image
+plane, so the map from the plane to the image is a pure similarity: a rotation
+and a uniform scale, with no foreshortening in any direction. Its local
+derivative $\mathbf{A}$ is then exactly a scaled rotation, and dividing by its
+largest singular value $\gamma$ leaves $\mathbf{R}_{2\times2}$ orthogonal. The
+right-hand side vanishes, hence $\mathbf{b}=\mathbf{0}$.
+
+The third column follows: with $\mathbf{b}=\mathbf{0}$ the cross product of the
+first two columns is $(0,0,\pm1)^\top$, so $\mathbf{c}=\mathbf{0}$ as well.
+Both sign choices produce the \emph{same} matrix, and the solver returns one
+pose twice.
+
+Away from $0^\circ$ the plane is foreshortened along one direction only, so
+$\mathbf{A}$ is no longer conformal, its two singular values separate, and
+$\mathbf{b}$ becomes non-zero. Measuring it along the sweep gives a clean
+identity,
+\begin{equation}
+  \|\mathbf{b}\| = \sin\theta ,
+  \label{eq:b-sin}
+\end{equation}
+which we verified to machine precision at every sampled angle
+($\theta=1^\circ$: $0.017452$; $\theta=20^\circ$: $0.342020$;
+$\theta=45^\circ$: $0.707107$). So $\|\mathbf{b}\|$ is exactly the
+\emph{amount of ambiguity} in the configuration: zero head-on, maximal
+edge-on, and growing as the sine of the tilt. The degeneracy at $0^\circ$ is
+not a numerical accident but a property of the geometry.
+
+\subsubsection{Why the pose error is exactly twice the viewing angle}
+
+Column three of Table~\ref{tab:sweep} reads $2\theta$ at every sampled angle,
+with no rounding error. The reason is that IPPE's two solutions place the
+marker normal symmetrically about the line of sight.
+
+Let $\mathbf{d}$ be the unit vector from the marker centre to the camera
+centre. By definition of the viewing angle, the true normal $\mathbf{n}_1$
+makes an angle $\theta$ with $\mathbf{d}$. Both candidates reproduce the same
+local homography, and the only other plane orientation that does so is the one
+obtained by tilting the normal by $\theta$ on the \emph{other} side of
+$\mathbf{d}$. The two normals are therefore coplanar with $\mathbf{d}$ and
+separated by
+\begin{equation}
+  \angle(\mathbf{n}_1,\mathbf{n}_2) = 2\theta .
+\end{equation}
+
+That accounts for the normals, but a rotation has three degrees of freedom and
+the normal fixes only two: in principle the two candidates could also differ by
+an in-plane spin, which would make the geodesic distance \emph{larger} than
+$2\theta$. They do not. Computing the relative rotation
+$\mathbf{R}_1^\top\mathbf{R}_2$ along the sweep shows that its axis is, to
+machine precision, the marker's $Y$ axis --- the in-plane axis orthogonal to
+the tilt direction, the azimuth being $0^\circ$ --- and its angle is exactly
+$2\theta$:
+\begin{equation}
+  \mathbf{R}_1^\top\mathbf{R}_2
+  = \exp\!\big([\,2\theta\,\mathbf{u}\,]_\times\big),
+  \qquad \mathbf{u}\perp\mathbf{n}_1,\ \mathbf{u}\ \text{in the marker plane}.
+\end{equation}
+In other words the mirror candidate is the true pose \emph{flipped about an
+in-plane axis}, with no extra spin: the whole discrepancy is a re-orientation
+of the plane, which is why the geodesic error and the angle between the normals
+agree. The consequence is uncomfortable, and is the point of the experiment: at
+a modest $\theta=5^\circ$ the wrong candidate is already $10^\circ$ away in 3D,
+while its image differs by about $1$ px.
+
+\paragraph{The image is far less sensitive than the pose.} At $5^\circ$ the
+two poses are $10^\circ$ apart yet their images differ by about $1$ px. This
+gap between 3D separation and image separation is the practical form of the
+ambiguity: the pixels simply do not carry enough evidence to decide.
+
+\paragraph{Separability depends on the noise.} With image noise of standard
+deviation $\sigma_{px}$, the two candidates are distinguishable only where the
+mirror RMSE is comfortably above $\sigma_{px}$. For the $\sigma_{px} = 0.5$ px
+used in Experiment 2, that threshold falls at around $2$--$3^\circ$ for this
+configuration. Both the distance and the marker size enter here through the
+apparent size of the square, so the threshold is a property of the
+configuration and not of the method.
+
+\paragraph{The curve saturates.} Beyond $75^\circ$ the mirror RMSE gains only
+half a pixel, and by $89^\circ$ the marker is under three pixels wide. Extreme
+obliquity separates the candidates no further while making every other aspect
+of the problem worse.
+\FloatBarrier
+
+% ============================================================
+\section{Experiment 2 --- Conditioning and Monte Carlo}
+\label{sec:experiment2}
+% ============================================================
+
+% ------------------------------------------------------------
+\subsection{The Residual Jacobian}
+% ------------------------------------------------------------
+
+Pose estimation from a marker is, in its general form, the minimization of the
+reprojection cost $E(\mathbf{R},\mathbf{t})$ of \eqref{eq:cost}. This experiment
+asks how sensitive that minimization is to noise on the corners, which is a
+question about the derivatives of $E$ at the solution.
+
+Let $\mathbf{e}\in\R^{8}$ stack the scalar residuals \eqref{eq:residual} of the
+four corners, so that $E = \|\mathbf{e}\|^2$. For a local pose increment
+ordered as
 \begin{equation}
   \delta\boldsymbol{\theta} =
   (\delta t_x,\delta t_y,\delta t_z,
@@ -340,14 +844,9 @@ standard deviation $\sigma_{px}$, the first-order covariance prediction is
 Translation is expressed in metres and rotation in radians, so these units
 are part of the stated conditioning convention.
 
-% ============================================================
-\section{Synthetic Experiments}
-% ============================================================
-
-For the viewpoint sweep, the camera centre moves on a fixed-radius,
-front-facing arc from $0^\circ$ (fronto-parallel) to $75^\circ$, while always
-looking at the marker centre. Both IPPE candidates and their reprojection
-errors are recorded at each viewpoint and plotted against the viewing angle.
+% ------------------------------------------------------------
+\subsection{Monte Carlo Validation}
+% ------------------------------------------------------------
 
 For Monte Carlo validation, independent zero-mean Gaussian noise is added to
 each of the eight scalar image coordinates. Repeated pose estimates at a
