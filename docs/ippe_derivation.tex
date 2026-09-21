@@ -1,0 +1,634 @@
+% ============================================================
+%  IPPE for a square marker --- full derivation, every step
+%  Standalone note. Compiles with pdfLaTeX (on Overleaf: just upload it).
+%  Study aid kept alongside the code; it is not included in report.tex.
+% ============================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{booktabs,array,longtable}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue!55!black]{hyperref}
+
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+% --- notation shortcuts (none of these clash with LaTeX built-ins) ---
+\newcommand{\Rset}{\mathbb{R}}
+\newcommand{\Rmat}{\mathbf{R}}
+\newcommand{\Rtil}{\widetilde{\mathbf{R}}}
+\newcommand{\Amat}{\mathbf{A}}
+\newcommand{\Bmat}{\mathbf{B}}
+\newcommand{\Hmat}{\mathbf{H}}
+\newcommand{\Jmat}{\mathbf{J}}
+\newcommand{\Kmat}{\mathbf{K}}
+\newcommand{\Lmat}{\mathbf{L}}
+\newcommand{\Mmat}{\mathbf{M}}
+\newcommand{\Rvee}{\mathbf{R}_{\vvec}}
+\newcommand{\Pimat}{\boldsymbol{\Pi}_{\vvec}}
+\newcommand{\Idm}{\mathbf{I}}
+\newcommand{\bvec}{\mathbf{b}}
+\newcommand{\cvec}{\mathbf{c}}
+\newcommand{\evec}{\mathbf{e}}
+\newcommand{\lvec}{\mathbf{l}}
+\newcommand{\Pvec}{\mathbf{P}}
+\newcommand{\qvec}{\mathbf{q}}
+\newcommand{\rvec}{\mathbf{r}}
+\newcommand{\tvec}{\mathbf{t}}
+\newcommand{\uvec}{\mathbf{u}}
+\newcommand{\vvec}{\mathbf{v}}
+\newcommand{\wvec}{\mathbf{w}}
+\newcommand{\xvec}{\mathbf{x}}
+\newcommand{\Xvec}{\mathbf{X}}
+\newcommand{\zerovec}{\mathbf{0}}
+\newcommand{\skewm}[1]{[#1]_{\times}}
+
+\title{IPPE for a Square Marker\\[0.3em]
+       \large Every formula, every symbol, in order}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent
+This note derives the two IPPE pose candidates from scratch. Nothing is assumed
+beyond the pinhole camera model and basic linear algebra. Every symbol is
+defined in Section~\ref{sec:symbols}, and again where it first appears.
+
+\tableofcontents
+
+% ============================================================
+\section{Symbols}
+\label{sec:symbols}
+% ============================================================
+
+\begin{longtable}{@{}lp{11.2cm}@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Symbol & Meaning \\
+\midrule
+\endhead
+$\Xvec = (X,Y,0)^{\top}$ & a point of the marker, in the marker frame; the
+  marker lies on the plane $Z=0$, so the third coordinate is always zero \\
+$\Rmat \in \mathrm{SO}(3)$ & rotation of the pose: marker frame $\to$ camera
+  frame \\
+$\tvec = (t_1,t_2,t_3)^{\top}$ & translation of the pose; $t_3 > 0$ is the
+  depth of the marker centre \\
+$\rvec_1,\rvec_2,\rvec_3$ & the three columns of $\Rmat$ \\
+$\Pvec = (P_1,P_2,P_3)^{\top}$ & the marker point in the camera frame,
+  $\Pvec = \Rmat\Xvec + \tvec$ \\
+$\xvec = (x_1,x_2)^{\top}$ & normalized image coordinates of $\Pvec$, i.e.\
+  pixels with $\Kmat^{-1}$ already applied \\
+$\Kmat$ & camera intrinsic matrix; plays no role after normalization \\
+$\Hmat$ & homography from the marker plane to normalized image coordinates,
+  $3\times3$, scaled so that $h_{33}=1$ \\
+$h_{ij}$ & entry $(i,j)$ of $\Hmat$ \\
+$\vvec = (v_1,v_2)^{\top}$ & normalized image point of the \emph{square
+  centre}; equals $(h_{13},h_{23})^{\top}$ \\
+$\Jmat$ & $2\times2$ derivative of the normalized projection with respect to
+  $(X,Y)$, evaluated at the square centre \\
+$\Pimat$ & $2\times3$ matrix appearing in the derivative of the perspective
+  divide; see \eqref{eq:pidef} \\
+$\Rvee$ & rotation taking $\evec_3$ onto $(v_1,v_2,1)^{\top}$; a change of
+  frame \\
+$\Lmat$ & the pose rotation seen in that frame, $\Rmat = \Rvee\Lmat$ \\
+$\lvec_1,\lvec_2,\lvec_3$ & the three columns of $\Lmat$ \\
+$\Rtil$ & upper-left $2\times2$ block of $\Lmat$; the part IPPE recovers first \\
+$\bvec = (b_1,b_2)^{\top}$ & third row of the first two columns of $\Lmat$; the
+  part the derivative does \emph{not} see, and the source of the ambiguity \\
+$\cvec = (c_1,c_2)^{\top}$, $a$ & the third column of $\Lmat$, split as
+  $\lvec_3 = (c_1,c_2,a)^{\top}$ \\
+$\Amat$ & $2\times2$ matrix defined by $\Amat = \Bmat^{-1}\Jmat$; turns out to
+  equal $\Rtil / t_3$ \\
+$\Bmat$ & $2\times2$ matrix defined in \eqref{eq:Bdef} \\
+$\gamma$ & largest singular value of $\Amat$; turns out to equal $1/t_3$ \\
+$\sigma_1,\sigma_2$ & singular values of a matrix, ordered
+  $\sigma_1 \ge \sigma_2$ \\
+$\theta$ & viewing angle: the angle between the marker normal and the line from
+  the marker centre to the camera centre; $\theta = 0$ is fronto-parallel \\
+$\qvec^{(i)}$ & camera ray of corner $i$, $\qvec^{(i)} =
+  (x_1^{(i)},x_2^{(i)},1)^{\top}$ \\
+$\skewm{\qvec}$ & skew-symmetric matrix with
+  $\skewm{\qvec}\wvec = \qvec \times \wvec$ \\
+$\Idm$, $\evec_3$ & identity matrix; third basis vector $(0,0,1)^{\top}$ \\
+\bottomrule
+\end{longtable}
+
+% ============================================================
+\section{Step 0 --- The projection, and why a homography appears}
+% ============================================================
+
+A marker point $\Xvec = (X,Y,0)^{\top}$ lands in the camera frame at
+\begin{equation}
+  \Pvec \;=\; \Rmat\Xvec + \tvec
+  \;=\; X\,\rvec_1 + Y\,\rvec_2 + \tvec ,
+  \label{eq:rigid}
+\end{equation}
+because the third coordinate of $\Xvec$ is zero and therefore multiplies
+$\rvec_3$ away. The camera then divides by depth:
+\begin{equation}
+  \xvec \;=\; \pi(\Pvec) \;=\;
+  \begin{pmatrix} P_1/P_3 \\[2pt] P_2/P_3 \end{pmatrix}.
+  \label{eq:divide}
+\end{equation}
+Combining \eqref{eq:rigid} and \eqref{eq:divide} in homogeneous form,
+\begin{equation}
+  \begin{pmatrix} x_1 \\ x_2 \\ 1 \end{pmatrix}
+  \;\sim\;
+  \begin{bmatrix} \rvec_1 & \rvec_2 & \tvec \end{bmatrix}
+  \begin{pmatrix} X \\ Y \\ 1 \end{pmatrix}
+  \;=\; \Hmat \begin{pmatrix} X \\ Y \\ 1 \end{pmatrix},
+  \label{eq:homography}
+\end{equation}
+where $\sim$ means ``equal up to a non-zero scale factor''. The whole geometry
+of a planar marker is thus a single $3\times3$ matrix
+$\Hmat = [\,\rvec_1\ \rvec_2\ \tvec\,]$, defined up to scale. Fixing the scale
+by dividing by $h_{33} = t_3$ gives
+\begin{equation}
+  \Hmat \;=\; \frac{1}{t_3}
+  \begin{bmatrix} \rvec_1 & \rvec_2 & \tvec \end{bmatrix},
+  \qquad h_{33} = 1 .
+  \label{eq:Hscaled}
+\end{equation}
+
+\paragraph{The idea behind IPPE.} One could try to read $\rvec_1$, $\rvec_2$
+and $\tvec$ straight off $\Hmat$, but an estimated $\Hmat$ is noisy and its
+first two columns are not exactly orthonormal, so that route needs a correction
+step of its own. IPPE instead uses only \emph{local} information at one point of
+the plane: the image of the square centre, and the first derivative of the map
+there. Two quantities, and everything else follows.
+
+% ============================================================
+\section{Step 1 --- The two local quantities}
+% ============================================================
+
+\subsection{The image of the centre}
+
+The square is centred at the origin of the marker frame, so evaluate
+\eqref{eq:homography} at $(X,Y) = (0,0)$. Only the last column of $\Hmat$
+survives:
+\begin{equation}
+  \vvec \;=\; \begin{pmatrix} h_{13} \\ h_{23} \end{pmatrix}
+  \;\overset{\eqref{eq:Hscaled}}{=}\;
+  \begin{pmatrix} t_1/t_3 \\[2pt] t_2/t_3 \end{pmatrix}.
+  \label{eq:vdef}
+\end{equation}
+So $\vvec$ is the normalized projection of the marker centre, obtained for free
+from the third column of the homography.
+
+\subsection{The derivative at the centre}
+
+Differentiating the perspective divide \eqref{eq:divide} with respect to
+$\Pvec$,
+\begin{equation}
+  \frac{\partial \pi}{\partial \Pvec}
+  \;=\; \frac{1}{P_3}
+  \begin{bmatrix}
+    1 & 0 & -P_1/P_3 \\
+    0 & 1 & -P_2/P_3
+  \end{bmatrix}
+  \;=\; \frac{1}{P_3}
+  \begin{bmatrix}
+    1 & 0 & -x_1 \\
+    0 & 1 & -x_2
+  \end{bmatrix},
+  \label{eq:dpi}
+\end{equation}
+while \eqref{eq:rigid} shows that the derivative of $\Pvec$ with respect to the
+plane coordinates is constant,
+\begin{equation}
+  \frac{\partial \Pvec}{\partial (X,Y)}
+  \;=\; \begin{bmatrix} \rvec_1 & \rvec_2 \end{bmatrix}
+  \qquad (3\times2).
+  \label{eq:dP}
+\end{equation}
+At the centre $\Pvec = \tvec$, hence $P_3 = t_3$ and $\xvec = \vvec$. Writing
+\begin{equation}
+  \Pimat \;\coloneqq\;
+  \begin{bmatrix}
+    1 & 0 & -v_1 \\
+    0 & 1 & -v_2
+  \end{bmatrix}
+  \qquad (2\times3),
+  \label{eq:pidef}
+\end{equation}
+the chain rule applied to \eqref{eq:dpi} and \eqref{eq:dP} gives the second
+local quantity,
+\begin{equation}
+  \boxed{\;
+  \Jmat \;=\; \frac{1}{t_3}\,\Pimat
+  \begin{bmatrix} \rvec_1 & \rvec_2 \end{bmatrix}
+  \;}
+  \qquad (2\times2).
+  \label{eq:Jdef}
+\end{equation}
+
+\paragraph{How $\Jmat$ is computed in practice.} We do not know
+$\rvec_1,\rvec_2,\tvec$; we know $\Hmat$. Writing the first normalized
+coordinate as a ratio,
+\begin{equation}
+  x_1(X,Y) \;=\;
+  \frac{h_{11}X + h_{12}Y + h_{13}}{h_{31}X + h_{32}Y + 1},
+\end{equation}
+the quotient rule at $(X,Y) = (0,0)$, where the denominator equals $1$, gives
+$\partial x_1 / \partial X = h_{11} - h_{13}h_{31}$, and similarly for the other
+three entries:
+\begin{equation}
+  \Jmat \;=\;
+  \begin{bmatrix}
+    h_{11} - h_{13}h_{31} & h_{12} - h_{13}h_{32} \\
+    h_{21} - h_{23}h_{31} & h_{22} - h_{23}h_{32}
+  \end{bmatrix}.
+  \label{eq:JfromH}
+\end{equation}
+Equations \eqref{eq:Jdef} and \eqref{eq:JfromH} are the same matrix: the first
+says what it \emph{means}, the second how to \emph{compute} it.
+
+% ============================================================
+\section{Step 2 --- A change of frame that removes one unknown}
+% ============================================================
+
+\subsection{The rotation $\Rvee$}
+
+Let $\Rvee$ be any rotation with
+\begin{equation}
+  \Rvee\,\evec_3 \;=\;
+  \frac{1}{\sqrt{v_1^2 + v_2^2 + 1}}
+  \begin{pmatrix} v_1 \\ v_2 \\ 1 \end{pmatrix},
+  \label{eq:Rvdef}
+\end{equation}
+that is, the rotation pointing the optical axis at the observed marker centre.
+The minimal such rotation has a closed form through Rodrigues' formula; any
+valid choice works. Define $\Lmat$ by
+\begin{equation}
+  \Rmat \;=\; \Rvee\,\Lmat
+  \qquad \Longleftrightarrow \qquad
+  \Lmat \;=\; \Rvee^{\top}\Rmat .
+  \label{eq:Ldef}
+\end{equation}
+$\Lmat$ is the pose rotation expressed in the frame where the marker centre lies
+on the optical axis. Since $\Rvee$ is known from $\vvec$ alone, recovering
+$\Lmat$ is equivalent to recovering $\Rmat$.
+
+\subsection{Substituting into $\Jmat$}
+
+The first two columns of $\Rmat$ are
+$[\,\rvec_1\ \rvec_2\,] = \Rvee[\,\lvec_1\ \lvec_2\,]$, so \eqref{eq:Jdef}
+becomes
+\begin{equation}
+  \Jmat \;=\; \frac{1}{t_3}\,\Pimat\,\Rvee
+  \begin{bmatrix} \lvec_1 & \lvec_2 \end{bmatrix}.
+  \label{eq:Jsub}
+\end{equation}
+Split the $3\times2$ matrix $[\,\lvec_1\ \lvec_2\,]$ into its first two rows and
+its third row:
+\begin{equation}
+  \begin{bmatrix} \lvec_1 & \lvec_2 \end{bmatrix}
+  \;=\;
+  \begin{bmatrix} \Rtil \\[2pt] \bvec^{\top} \end{bmatrix},
+  \qquad
+  \Rtil \coloneqq
+  \begin{bmatrix}
+    \ell_{11} & \ell_{12} \\
+    \ell_{21} & \ell_{22}
+  \end{bmatrix},
+  \qquad
+  \bvec \coloneqq
+  \begin{pmatrix} \ell_{31} \\ \ell_{32} \end{pmatrix},
+  \label{eq:split}
+\end{equation}
+where $\ell_{ij}$ is the entry $(i,j)$ of $\Lmat$. The product then separates
+into two terms,
+\begin{equation}
+  \Pimat\Rvee
+  \begin{bmatrix} \lvec_1 & \lvec_2 \end{bmatrix}
+  \;=\;
+  \underbrace{\big(\Pimat\,\Rvee^{(1,2)}\big)}_{\textstyle \eqqcolon\, \Bmat}
+  \,\Rtil
+  \;+\;
+  \big(\Pimat\,\Rvee\,\evec_3\big)\,\bvec^{\top},
+  \label{eq:twoterms}
+\end{equation}
+in which $\Rvee^{(1,2)}$ denotes the first two columns of $\Rvee$, so that
+\begin{equation}
+  \Bmat \;\coloneqq\; \Pimat\,\Rvee^{(1,2)}
+  \qquad (2\times2).
+  \label{eq:Bdef}
+\end{equation}
+
+\subsection{The cancellation}
+
+The second term of \eqref{eq:twoterms} vanishes identically. By
+\eqref{eq:Rvdef} the vector $\Rvee\evec_3$ is proportional to
+$(v_1,v_2,1)^{\top}$, and by the definition \eqref{eq:pidef} of $\Pimat$,
+\begin{equation}
+  \Pimat \begin{pmatrix} v_1 \\ v_2 \\ 1 \end{pmatrix}
+  \;=\;
+  \begin{pmatrix} v_1 - v_1 \\ v_2 - v_2 \end{pmatrix}
+  \;=\; \zerovec .
+  \label{eq:cancel}
+\end{equation}
+This is the crucial step, and it deserves to be said in words: \emph{the
+derivative of the image at the centre carries no information whatsoever about
+$\bvec$.} Substituting \eqref{eq:cancel} into \eqref{eq:twoterms} and the result
+into \eqref{eq:Jsub},
+\begin{equation}
+  \Jmat \;=\; \frac{1}{t_3}\,\Bmat\,\Rtil .
+  \label{eq:JBR}
+\end{equation}
+Since $\Bmat$ is built from known quantities ($\vvec$, hence $\Pimat$ and
+$\Rvee$), it can be inverted, which defines
+\begin{equation}
+  \boxed{\;
+  \Amat \;\coloneqq\; \Bmat^{-1}\Jmat \;=\; \frac{1}{t_3}\,\Rtil
+  \;}
+  \label{eq:Adef}
+\end{equation}
+One $2\times2$ inversion therefore delivers the upper-left block of the
+rotation, up to the unknown depth $t_3$.
+
+% ============================================================
+\section{Step 3 --- Fixing the scale}
+% ============================================================
+
+To turn $\Amat$ into $\Rtil$ we still need $t_3$. Orthonormality supplies it.
+
+\subsection{The key identity}
+
+The first two columns of $\Lmat$ are orthonormal, because $\Lmat$ is a rotation:
+\begin{equation}
+  \Mmat \;\coloneqq\;
+  \begin{bmatrix} \lvec_1 & \lvec_2 \end{bmatrix}
+  \;=\;
+  \begin{bmatrix} \Rtil \\[2pt] \bvec^{\top} \end{bmatrix}
+  \qquad \text{satisfies} \qquad
+  \Mmat^{\top}\Mmat \;=\; \Idm_2 .
+\end{equation}
+Expanding the product block by block,
+\begin{equation}
+  \Mmat^{\top}\Mmat
+  \;=\; \Rtil^{\top}\Rtil + \bvec\,\bvec^{\top}
+  \;=\; \Idm_2 .
+  \label{eq:key}
+\end{equation}
+Call this the \emph{key identity}. It is used twice: here, to fix the scale, and
+in Section~\ref{sec:b}, to produce $\bvec$.
+
+\subsection{Consequence for the singular values}
+
+From \eqref{eq:key}, $\Rtil^{\top}\Rtil = \Idm_2 - \bvec\bvec^{\top}$. The
+matrix $\bvec\bvec^{\top}$ has eigenvalue $\|\bvec\|^2$ along $\bvec$ and $0$ in
+the orthogonal direction, so $\Rtil^{\top}\Rtil$ has eigenvalues $1$ and
+$1 - \|\bvec\|^2$. Taking square roots, the singular values of $\Rtil$ are
+\begin{equation}
+  \sigma_1(\Rtil) = 1,
+  \qquad
+  \sigma_2(\Rtil) = \sqrt{1 - \|\bvec\|^2}.
+  \label{eq:sv}
+\end{equation}
+The first is \emph{exactly} $1$, for every pose. Applying this to
+\eqref{eq:Adef}, and using the fact that scaling a matrix scales its singular
+values,
+\begin{equation}
+  \gamma \;\coloneqq\; \sigma_1(\Amat)
+  \;=\; \frac{\sigma_1(\Rtil)}{t_3}
+  \;=\; \frac{1}{t_3},
+  \label{eq:gamma}
+\end{equation}
+and therefore
+\begin{equation}
+  \boxed{\;
+  \Rtil \;=\; \frac{\Amat}{\gamma}
+  \;}
+  \qquad \text{and} \qquad
+  t_3 \;=\; \frac{1}{\gamma}.
+  \label{eq:Rtilde}
+\end{equation}
+The depth comes out as a by-product.
+
+% ============================================================
+\section{Step 4 --- Where $\bvec$ comes from}
+\label{sec:b}
+% ============================================================
+
+\subsection{The equation for $\bvec$}
+
+Rearranging the key identity \eqref{eq:key} isolates the unknown:
+\begin{equation}
+  \boxed{\;
+  \bvec\,\bvec^{\top} \;=\; \Idm_2 - \Rtil^{\top}\Rtil
+  \;}
+  \label{eq:bb}
+\end{equation}
+Everything on the right is known once $\Rtil$ has been computed in
+\eqref{eq:Rtilde}. That right-hand side is symmetric, positive semidefinite and
+of rank at most one, exactly as an outer product $\bvec\bvec^{\top}$ must be. So
+$\bvec$ is read off its leading eigenpair: if $\lambda \ge 0$ is the largest
+eigenvalue and $\uvec$ a corresponding unit eigenvector, then
+\begin{equation}
+  \bvec \;=\; \pm\sqrt{\lambda}\;\uvec .
+  \label{eq:beig}
+\end{equation}
+
+\subsection{The same thing, entry by entry}
+
+Equation \eqref{eq:bb} says no more than that the columns of $\Mmat$ have unit
+norm and are mutually orthogonal. Writing the entries of $\Rtil$ as
+$\tilde r_{ij}$, the three scalar equations are
+\begin{align}
+  \tilde r_{11}^2 + \tilde r_{21}^2 + b_1^2 &= 1
+  &&\Longrightarrow&
+  b_1 &= \pm\sqrt{1 - \tilde r_{11}^2 - \tilde r_{21}^2},
+  \label{eq:b1} \\
+  \tilde r_{12}^2 + \tilde r_{22}^2 + b_2^2 &= 1
+  &&\Longrightarrow&
+  b_2 &= \pm\sqrt{1 - \tilde r_{12}^2 - \tilde r_{22}^2},
+  \label{eq:b2} \\
+  \tilde r_{11}\tilde r_{12} + \tilde r_{21}\tilde r_{22} + b_1 b_2 &= 0
+  &&\Longrightarrow&
+  \operatorname{sign}(b_1 b_2)
+  &= -\operatorname{sign}\big(
+     \tilde r_{11}\tilde r_{12} + \tilde r_{21}\tilde r_{22}\big).
+  \label{eq:b3}
+\end{align}
+The first two equations give the magnitudes, the third ties the two signs
+together. One global sign remains free, and that is the ambiguity.
+
+\subsection{Why this is precisely the ambiguity}
+
+Equation \eqref{eq:bb} is quadratic in $\bvec$: if $\bvec$ solves it, so does
+$-\bvec$, since $(-\bvec)(-\bvec)^{\top} = \bvec\bvec^{\top}$. No data can
+distinguish the two, because by the cancellation \eqref{eq:cancel} the local
+derivative $\Jmat$ never saw $\bvec$ at all. Hence \emph{two} poses rather than
+one. This is not a numerical accident nor an arbitrary tie-break: it is the
+structure of the problem.
+
+% ============================================================
+\section{Step 5 --- Completing the rotation}
+% ============================================================
+
+For each sign choice we now know the first two columns of $\Lmat$,
+\begin{equation}
+  \lvec_1 =
+  \begin{pmatrix} \tilde r_{11} \\ \tilde r_{21} \\ b_1 \end{pmatrix},
+  \qquad
+  \lvec_2 =
+  \begin{pmatrix} \tilde r_{12} \\ \tilde r_{22} \\ b_2 \end{pmatrix}.
+\end{equation}
+A rotation has orthonormal columns and determinant $+1$, so the third column is
+forced:
+\begin{equation}
+  \lvec_3 \;=\; \lvec_1 \times \lvec_2
+  \;\eqqcolon\;
+  \begin{pmatrix} c_1 \\ c_2 \\ a \end{pmatrix}.
+  \label{eq:third}
+\end{equation}
+Assembling $\Lmat$ and undoing the change of frame \eqref{eq:Ldef} gives the two
+candidates
+\begin{equation}
+  \boxed{\;
+  \Rmat^{\pm} \;=\; \Rvee
+  \begin{bmatrix}
+    \Rtil & \pm\cvec \\[2pt]
+    \pm\bvec^{\top} & a
+  \end{bmatrix}
+  \;}
+  \label{eq:twoposes}
+\end{equation}
+Note that $\cvec$ flips sign together with $\bvec$: replacing $\bvec$ by
+$-\bvec$ in \eqref{eq:third} reverses the first two components of the cross
+product, while the third,
+$a = \tilde r_{11}\tilde r_{22} - \tilde r_{12}\tilde r_{21}$, is unchanged.
+
+% ============================================================
+\section{Step 6 --- Translation}
+% ============================================================
+
+Once a rotation is fixed, translation is a linear problem. Let corner $i$ have
+normalized image point $(x_1^{(i)}, x_2^{(i)})$ and camera ray
+\begin{equation}
+  \qvec^{(i)} =
+  \begin{pmatrix} x_1^{(i)} \\ x_2^{(i)} \\ 1 \end{pmatrix}.
+\end{equation}
+The camera-frame point $\Rmat\Xvec^{(i)} + \tvec$ must lie along that ray, that
+is, be parallel to it, which is expressed by a vanishing cross product:
+\begin{equation}
+  \qvec^{(i)} \times \big(\Rmat\Xvec^{(i)} + \tvec\big) = \zerovec
+  \qquad \Longleftrightarrow \qquad
+  \skewm{\qvec^{(i)}}\,\tvec
+  \;=\; -\skewm{\qvec^{(i)}}\,\Rmat\Xvec^{(i)},
+  \label{eq:translation}
+\end{equation}
+where $\skewm{\qvec}$ is the skew-symmetric matrix satisfying
+$\skewm{\qvec}\wvec = \qvec \times \wvec$,
+\begin{equation}
+  \skewm{\qvec} =
+  \begin{bmatrix}
+    0 & -q_3 & q_2 \\
+    q_3 & 0 & -q_1 \\
+    -q_2 & q_1 & 0
+  \end{bmatrix}.
+\end{equation}
+Only two of the three rows per corner are independent. Writing
+$\Pvec = \Rmat\Xvec^{(i)} + \tvec$, the three rows of \eqref{eq:translation} are
+\begin{align}
+  &\text{row 1:} & -P_2 + x_2 P_3 &= 0, \\
+  &\text{row 2:} & P_1 - x_1 P_3 &= 0, \\
+  &\text{row 3:} & -x_2 P_1 + x_1 P_2 &= 0,
+\end{align}
+and row 3 equals $-(x_1\cdot\text{row 1} + x_2\cdot\text{row 2})$. It carries no
+new information, but in a least-squares fit it would still change the weight of
+each residual. The implementation keeps rows 1 and 2 only: stacked over the four
+corners they give an $8 \times 3$ system, solved in the least-squares sense,
+which already has rank $3$ with two corners.
+
+\begin{remark}
+Rows 1 and 2 are exactly the equations OpenCV uses, obtained by clearing the
+denominator in $x_1 = (\rvec_1^{\top}\Xvec + t_1)/(\rvec_3^{\top}\Xvec + t_3)$
+and its counterpart for $x_2$. Keeping all three rows instead gives a
+$12\times3$ system with the same solution whenever the rotation fits the data
+exactly, but a slightly different one otherwise, as for the mirror candidate.
+With two rows the two implementations agree on both candidates.
+\end{remark}
+
+% ============================================================
+\section{What the quantities mean geometrically}
+% ============================================================
+
+Let $\theta$ be the viewing angle, the angle between the marker normal and the
+line joining the marker centre to the camera centre, so that $\theta = 0$ is a
+fronto-parallel view. Measured on a $0.5$~m arc with a $0.1$~m square, the
+following holds to machine precision:
+
+\begin{center}
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+$\theta$ & $\gamma$ & $1/t_3$ & $\sigma_2(\Rtil)$ & $\cos\theta$
+  & $\|\bvec\|$ \\
+\midrule
+$0^{\circ}$  & 2.00000 & 2.00000 & 1.000000 & 1.000000 & 0.00000 \\
+$5^{\circ}$  & 2.00000 & 2.00000 & 0.996195 & 0.996195 & 0.08716 \\
+$20^{\circ}$ & 2.00000 & 2.00000 & 0.939693 & 0.939693 & 0.34202 \\
+$45^{\circ}$ & 2.00000 & 2.00000 & 0.707107 & 0.707107 & 0.70711 \\
+$70^{\circ}$ & 2.00000 & 2.00000 & 0.342020 & 0.342020 & 0.93969 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+In other words,
+\begin{equation}
+  \gamma = \frac{1}{t_3},
+  \qquad
+  \sigma_2(\Rtil) = \cos\theta,
+  \qquad
+  \|\bvec\| = \sin\theta .
+  \label{eq:geometry}
+\end{equation}
+The interpretation is clean. The matrix $\Rtil$ has singular values $1$ and
+$\cos\theta$: a plane seen obliquely is compressed by a factor $\cos\theta$
+along one direction and left unchanged along the perpendicular one, which is
+exactly foreshortening. And $\|\bvec\|$, the quantity the image derivative
+cannot see, equals $\sin\theta$: it measures how far the plane is tilted out of
+the image plane.
+
+\paragraph{The degenerate case.} At $\theta = 0$ the map from the plane to the
+image is a pure similarity, so $\Rtil$ is orthogonal and
+$\Rtil^{\top}\Rtil = \Idm$. Equation \eqref{eq:bb} then gives
+$\bvec\bvec^{\top} = \mathbf{0}$, hence $\bvec = \zerovec$; the cross product
+\eqref{eq:third} becomes $(0,0,\pm1)^{\top}$, hence $\cvec = \zerovec$; and the
+two matrices in \eqref{eq:twoposes} are \emph{identical}. The solver returns the
+same pose twice, and the ambiguity is total: no image evidence can separate
+poses that are equal.
+
+% ============================================================
+\section{Summary of the algorithm}
+% ============================================================
+
+\begin{enumerate}[leftmargin=*]
+  \item Normalize the pixels with $\Kmat^{-1}$ and estimate $\Hmat$; scale it so
+        that $h_{33} = 1$.
+  \item Read $\vvec$ from \eqref{eq:vdef} and compute $\Jmat$ from
+        \eqref{eq:JfromH}.
+  \item Build $\Pimat$ from \eqref{eq:pidef}, $\Rvee$ from \eqref{eq:Rvdef}, and
+        $\Bmat = \Pimat\Rvee^{(1,2)}$ from \eqref{eq:Bdef}.
+  \item Compute $\Amat = \Bmat^{-1}\Jmat$, set $\gamma = \sigma_1(\Amat)$ and
+        $\Rtil = \Amat/\gamma$; the depth is $t_3 = 1/\gamma$.
+  \item Solve $\bvec\bvec^{\top} = \Idm - \Rtil^{\top}\Rtil$ for $\bvec$, which
+        determines it up to a global sign.
+  \item Complete each of the two rotations with
+        $\lvec_3 = \lvec_1 \times \lvec_2$ and map back through
+        $\Rmat^{\pm} = \Rvee\Lmat^{\pm}$.
+  \item For each rotation, solve \eqref{eq:translation} for $\tvec$ by least
+        squares.
+  \item Reproject the four corners and rank the two candidates by pixel error.
+\end{enumerate}
+
+\end{document}

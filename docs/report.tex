@@ -526,18 +526,21 @@ transformed point, that is
   \quad\Longleftrightarrow\quad
   [\mathbf{q}^{(i)}]_\times\,\mathbf{t}
   = -[\mathbf{q}^{(i)}]_\times\,\mathbf{R}\,\Pmark^{(i)} .
+  \label{eq:translation}
 \end{equation}
-Stacking all four corners gives a $12\times3$ system, solved in the
-least-squares sense. Only two of the three rows per corner are independent, but
-keeping all of them is numerically harmless and avoids forming a normal-equation
-inverse by hand.
+Only two of the three rows per corner are independent: writing
+$\mathbf{P}=\mathbf{R}\,\Pmark^{(i)}+\mathbf{t}$, the first two rows read
+$P_2 - y_n P_3 = 0$ and $P_1 - x_n P_3 = 0$, while the third,
+$x_n P_2 - y_n P_1 = 0$, is $x_n$ times the first minus $y_n$ times the second. We keep the first two, so stacking
+the four corners gives an $8\times3$ system, solved in the least-squares sense.
+This is the same system OpenCV solves; Section~\ref{sec:step7} explains why the
+choice matters.
 
 Both candidates are then reprojected, ranked by pixel RMSE, and returned
 together. We deliberately apply \emph{no} nonlinear refinement: an
 unconstrained optimization started from the two candidates can pull both to the
 same pose, which would erase the very ambiguity Experiment 1 sets out to
-measure. The price is a slight difference from OpenCV on the mirror candidate,
-quantified in Section~\ref{sec:step7}.
+measure.
 
 \subsubsection{Reference implementation}
 
@@ -562,8 +565,8 @@ solver is exact in the noiseless case rather than merely accurate.
 \toprule
 \rowcolor{accent}\thcell{Candidate}&\thcell{Solver}&\thcell{RMSE (px)}&\thcell{Rot.\ error ($^\circ$)}&\thcell{Transl.\ error (mm)}\\
 \midrule
-1&custom&$6.4\cdot10^{-14}$&$0$&$2.8\cdot10^{-13}$\\
-\rowcolor{lightbg} 2&custom&$3.33836$&$34.521$&$3.074$\\
+1&custom&$6.4\cdot10^{-14}$&$0$&$1.1\cdot10^{-13}$\\
+\rowcolor{lightbg} 2&custom&$3.33825$&$34.521$&$3.101$\\
 1&OpenCV&$2.2\cdot10^{-14}$&$0$&$1.1\cdot10^{-13}$\\
 \rowcolor{lightbg} 2&OpenCV&$3.33825$&$34.521$&$3.101$\\
 \bottomrule
@@ -573,13 +576,75 @@ from OpenCV, each compared with the ground-truth pose.}
 \label{tab:baseline}
 \end{table}
 
-Two observations are worth making. First, the two solvers agree on the primary
-pose to $10^{-13}$ mm, which validates the custom implementation. Second, the
+The candidate-1 values should not be compared with each other. The exact error
+is zero, since the pose fits the data perfectly, so what is printed is pure
+floating-point rounding. A double carries about $16$ significant digits, and
+with pixel coordinates near $500$ px the smallest representable step is about
+$500 \times 2.2\cdot10^{-16} \approx 10^{-13}$ px. Both $6.4\cdot10^{-14}$ and
+$2.2\cdot10^{-14}$ lie below that floor, so both are zero for every practical
+purpose; which one comes out larger depends only on the order of the
+floating-point operations inside each solver. The same absolute difference,
+about $2\cdot10^{-14}$ px, separates the two candidate-2 values, where it is
+simply invisible next to $3.3$ px.
+
+Two observations are worth making. First, the two solvers agree on \emph{both}
+candidates: to $10^{-13}$ mm on the primary pose, and to every printed digit on
+the mirror one, which validates the custom implementation. Second, the
 mirror candidate is $34.52^\circ$ away from the ground truth, that is exactly
 twice the $17.26^\circ$ viewing angle of the scene; Section~\ref{sec:experiment1}
-shows this is not a coincidence. The small residual gap between the two
-solvers on the mirror candidate ($3.33836$ against $3.33825$ px) comes from
-the internal refinement OpenCV applies and we deliberately do not.
+shows this is not a coincidence.
+
+% \paragraph{How the two solvers were brought into agreement.} A first version of our solver kept all three cross-product rows of \eqref{eq:translation}, a $12\times3$ system, and agreed with OpenCV on the primary pose but not on the mirror one ($3.33836$ against $3.33825$ px, translations $3.074$ against $3.101$ mm from the ground truth). We located the cause by elimination. It was not the error metric: recomputing OpenCV's pose with our formula reproduced its number to every digit. It was not the homography: OpenCV builds it in closed form for the square, we use a DLT, and the two agree to $4\cdot10^{-14}$. It was not $\mathbf{b}$ either, which agreed to $2\cdot10^{-15}$. It was the translation. The third row is a linear combination of the other two, so it adds no information, but in a least-squares fit it still reweights the residuals. When the rotation fits the data exactly the two systems share a solution --- hence the agreement on the primary pose --- but the mirror rotation never fits exactly, and there they gave translations $2.8\cdot10^{-5}$ m apart. Neither version is more correct, since each minimizes a different algebraic residual; keeping only the first two rows, as OpenCV does, makes the two implementations agree on both candidates, which is the version reported in Table~\ref{tab:baseline}.
+
+\paragraph{A limitation of OpenCV's IPPE at $180^\circ$.} While comparing the
+two solvers along the camera arc of Section~\ref{sec:experiment1}, OpenCV
+returned wrong poses: about $113$ px of reprojection error on data our solver
+fits to $10^{-13}$ px. The data were not at fault, since OpenCV's own
+\code{SOLVEPNP\_SQPNP} solves them to $10^{-14}$ px, and the generic
+\code{SOLVEPNP\_IPPE} flag fails in the same way as \flag. The translation it
+returned was correct and only the rotation was wrong, which points at the
+output stage rather than at the IPPE construction. The culprit is the private
+routine that converts the rotation matrix into a rotation vector. It uses the
+textbook formula
+\begin{equation}
+  \omega = \arccos\!\Big(\tfrac{\operatorname{tr}\mathbf{R}-1}{2}\Big),
+  \qquad
+  \boldsymbol{\omega}
+  = \frac{\omega}{2\sin\omega}
+    \begin{pmatrix}
+      R_{32}-R_{23}\\ R_{13}-R_{31}\\ R_{21}-R_{12}
+    \end{pmatrix},
+\end{equation}
+with no special case near $\omega=180^\circ$, where both $\sin\omega$ and the
+antisymmetric part of $\mathbf{R}$ vanish and the axis becomes $0/0$. A marker
+facing the camera is close to a half turn, and every pose on our arc is
+\emph{exactly} one, so it is lost entirely; OpenCV's own \code{cv2.Rodrigues},
+which handles this case, recovers the same rotations without error. The
+degradation is gradual as the angle approaches $180^\circ$:
+
+\begin{table}[h!]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}Yrr@{}}
+\toprule
+\rowcolor{accent}\thcell{Euler angles in the configuration}&\thcell{Rotation angle}&\thcell{OpenCV best RMSE (px)}\\
+\midrule
+$(15^\circ,10^\circ,5^\circ)$, the baseline & $165.5^\circ$ & $2\cdot10^{-14}$\\
+\rowcolor{lightbg} $(5^\circ,3^\circ,1^\circ)$ & $175.0^\circ$ & $4\cdot10^{-13}$\\
+$(1^\circ,0^\circ,0^\circ)$ & $179.0^\circ$ & $6\cdot10^{-12}$\\
+\rowcolor{lightbg} $(0^\circ,0^\circ,0^\circ)$ & $180.0^\circ$ & $1.21$\\
+\bottomrule
+\end{tabularx}
+\caption{OpenCV's IPPE-square accuracy as the ground-truth rotation approaches
+a half turn. With the facing flip of \eqref{eq:face-flip}, zero Euler angles
+give exactly $180^\circ$.}
+\label{tab:opencv180}
+\end{table}
+
+Two consequences follow. The baseline, at $165.5^\circ$, is unaffected, so the
+validation above stands. But the natural test of setting all three Euler angles
+to zero would make OpenCV fail while our solver remains exact, and it is one
+more reason Experiment 1 relies on our implementation: with OpenCV's IPPE the
+sweep could not have been run at all.
 
 % ============================================================
 \section{Experiment 1 --- The Two-Pose Ambiguity}
@@ -678,7 +743,7 @@ Figure~\ref{fig:sweep} shows the two curves. The true pose (candidate 1) sits
 at $\approx 10^{-13}$ px everywhere, as it must without noise. The mirror pose
 (candidate 2) starts at zero and grows monotonically to $12.15$ px.
 
-\resultfigure{viewpoint_sweep.png}
+\resultfigure{exp1_sweep.png}
  {Reprojection RMSE of the true and mirror candidates against the viewing angle.}
  {Reprojection RMSE of the two IPPE-square candidates against the viewing
  angle, one sample per degree.}
@@ -692,11 +757,11 @@ at $\approx 10^{-13}$ px everywhere, as it must without noise. The mirror pose
 \midrule
 0&$0.000$&$0$\\
 \rowcolor{lightbg} 1&$0.197$&$2$\\
-5&$0.987$&$10$\\
+5&$0.986$&$10$\\
 \rowcolor{lightbg} 15&$2.939$&$30$\\
 30&$5.736$&$60$\\
-\rowcolor{lightbg} 45&$8.241$&$90$\\
-60&$10.282$&$120$\\
+\rowcolor{lightbg} 45&$8.240$&$90$\\
+60&$10.281$&$120$\\
 \rowcolor{lightbg} 75&$11.659$&$150$\\
 89&$12.153$&$178$\\
 \bottomrule
