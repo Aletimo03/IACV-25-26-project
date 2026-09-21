@@ -178,8 +178,8 @@ def main() -> None:
         config.CORNER_NOISE_STD_PX,
         config.SWEEP_AZIMUTH_DEG,
     )
-    plot_path = plot_viewpoint_sweep(results, args.output_dir / "viewpoint_sweep.png")
-    csv_path = write_viewpoint_sweep_csv(results, args.output_dir / "viewpoint_sweep.csv")
+    plot_path = plot_viewpoint_sweep(results, args.output_dir / "exp1_sweep.png")
+    csv_path = write_viewpoint_sweep_csv(results, args.output_dir / "exp1_sweep.csv")
     print("Experiment 1 --- viewpoint sweep")
     print(f"  wrote {plot_path}")
     print(f"  wrote {csv_path}")
