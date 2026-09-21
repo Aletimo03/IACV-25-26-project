@@ -176,9 +176,9 @@ def solve_translation(
 ) -> np.ndarray:
     """Estimate translation for a fixed rotation by linear least squares.
 
-    Each correspondence imposes ``q × (R X + t) = 0``.  Stacking all three
-    cross-product equations is redundant but stable and naturally uses every
-    corner without explicitly forming a normal-equation inverse.
+    Each correspondence imposes ``q × (R X + t) = 0``.  Only the first two of
+    the three cross-product equations are stacked, which uses every corner
+    without explicitly forming a normal-equation inverse.
     """
     rows: list[np.ndarray] = []
     right_hand_sides: list[np.ndarray] = []
@@ -191,8 +191,10 @@ def solve_translation(
                 [-ray[1], ray[0], 0.0],
             ]
         )
-        rows.append(ray_cross)
-        right_hand_sides.append(-ray_cross @ (rotation @ point))
+        # Row 3 is a combination of rows 1-2 but reweights the fit; dropping it
+        # gives OpenCV's 8x3 system, so both candidates match OpenCV exactly.
+        rows.append(ray_cross[:2])
+        right_hand_sides.append((-ray_cross @ (rotation @ point))[:2])
     translation, *_ = np.linalg.lstsq(
         np.vstack(rows), np.concatenate(right_hand_sides), rcond=None
     )
