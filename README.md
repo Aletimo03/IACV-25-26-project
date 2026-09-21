@@ -55,7 +55,8 @@ python -m unittest discover -s tests -v
 | `experiment1.py` | Sweeps the viewpoint, keeps both candidates, writes plot and CSV |
 | `experiment2.py` | Conditioning per viewpoint plus the Monte Carlo noise study |
 | `tests/` | Regression tests for geometry, solver, Jacobian and experiments |
-| `report.tex` | The report (LaTeX, compiles with pdfLaTeX; see `figures/`) |
+| `docs/report.tex` | The report (LaTeX, compiles with pdfLaTeX) |
+| `docs/ippe_derivation.tex` | Standalone IPPE derivation, every symbol defined, including the proof of what the ambiguity vector means geometrically. Not part of the report |
 
 Dependency direction: `config` → `geometry` → `ippe_square` / `jacobian` /
 `viewpoint` → `pipeline` / `experiment1` / `experiment2`. Nothing imports an
@@ -83,14 +84,24 @@ Notes on the implementation:
   pose.
 - **Both candidates are returned, and neither is refined.** A free nonlinear
   refinement can pull both starting points to the same pose, which would hide
-  the ambiguity that experiment 1 is about. The price is a difference from
-  OpenCV in the fifth digit on the mirror candidate, since OpenCV does refine.
+  the ambiguity that experiment 1 is about.
+- **Translation uses the same 8×3 system as OpenCV.** `solve_translation` keeps
+  two of the three cross-product rows per corner. The third is redundant but
+  reweights the least-squares fit, and keeping it made the mirror candidate
+  differ from OpenCV in the fifth digit.
 - **`generate_scene()` contains no Jacobian and no experiment code.** Steps 1-7
   and the two studies are kept apart on purpose.
 
 On the default scene the primary candidate matches the ground truth to about
-`1e-13` mm, with per-corner residuals near machine precision, and agrees with
-OpenCV to the same order.
+`1e-13` mm, with per-corner residuals near machine precision, and both
+candidates agree with OpenCV.
+
+**Known OpenCV limitation:** OpenCV's IPPE converts its rotation to a vector
+without handling angles near 180°, so it returns wrong poses for a marker
+facing the camera almost exactly. The baseline sits at 165.5° and is fine, but
+setting all three Euler angles in `config.py` to zero gives exactly 180° and
+makes the OpenCV check in `pipeline.py` fail while our solver stays exact. See
+§2.7 of the report.
 
 ## Experiment 1 (`experiment1.py`)
 
@@ -102,21 +113,36 @@ reprojection error and their error against the ground truth.
 - The arc has a single free parameter: azimuth and radius are fixed in
   `config.py` (0° and 0.5 m).
 - No noise is added — the image points are the exact projections.
-- Outputs: `outputs/viewpoint_sweep.png` and `outputs/viewpoint_sweep.csv`
+- Outputs: `outputs/exp1_sweep.png` and `outputs/exp1_sweep.csv`
   (90 rows: angle, both RMSEs, both pose errors, and two conditioning columns).
-- `figures/viewpoint_sweep.png` is a tracked copy of the plot for the report.
-  Refresh it when you rerun the sweep.
+- The report expects the plot as `figures/exp1_sweep.png` (ignored by Git,
+  like `outputs/`). Upload it to Overleaf when you rerun the sweep.
 
-What comes out of it: the two candidates are identical head-on and separate as
-the view becomes oblique, the wrong one being exactly twice the viewing angle
-away in 3D while its image moves far more slowly. The curve flattens past 75°.
-The report discusses this in section 3.
+What comes out of it:
+
+- **Head-on, the two candidates are the same pose.** They separate as the view
+  becomes oblique.
+- **The wrong candidate is exactly twice the viewing angle away** in 3D, at
+  every angle, while its image moves far more slowly: at 5° the two poses are
+  10° apart and their images about 1 px apart.
+- **The curve flattens past 75°**, where extra tilt no longer separates them.
+
+**Why it happens.** The two IPPE candidates differ only by the sign of one
+vector, and that vector turns out to be the line of sight projected onto the
+marker plane. Its length is exactly the sine of the viewing angle, for any
+pose. So the image tells the solver *how much* the marker is tilted but not
+*towards which side*: two tilts, one on each side of the line of sight. The
+proof is in `docs/ippe_derivation.tex`, the discussion in section 3 of the
+report.
 
 Two things to know about the code:
 
 - `run_viewpoint_sweep` takes a `noise_std_px` argument but **does not add
   noise**; it only passes the value to `analyze_jacobian` to fill the two
   conditioning columns in the CSV.
+- The CSV has Windows-style (CRLF) line endings. That is Python's `csv` module
+  default on every platform, not a bug; PyCharm warns about it if you try to
+  commit the file.
 - Candidates are sorted by reprojection error, so the plot labels them
   "candidate 1 (best)" and "candidate 2". Without noise the best one is always
   the true pose; with noise that would stop being true, and the labels would
@@ -132,6 +158,11 @@ Known gap: the prediction assumes a least-squares estimator, whereas the trials
 re-solve with raw IPPE, which is algebraic and unrefined. The two agree well at
 60° and not at 5°. Adding a Gauss-Newton refinement on top of IPPE is the next
 step.
+
+Link to experiment 1: near head-on, the two weakest directions of the Jacobian
+are the two out-of-plane tilts, the same quantity the image cannot pin down in
+experiment 1. The ambiguity and the poor conditioning are two views of the same
+geometry.
 
 ## Conventions
 

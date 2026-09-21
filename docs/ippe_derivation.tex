@@ -45,6 +45,7 @@
 \newcommand{\xvec}{\mathbf{x}}
 \newcommand{\Xvec}{\mathbf{X}}
 \newcommand{\zerovec}{\mathbf{0}}
+\newcommand{\dhat}{\hat{\mathbf{d}}}
 \newcommand{\skewm}[1]{[#1]_{\times}}
 
 \title{IPPE for a Square Marker\\[0.3em]
@@ -113,6 +114,8 @@ $\sigma_1,\sigma_2$ & singular values of a matrix, ordered
   $\sigma_1 \ge \sigma_2$ \\
 $\theta$ & viewing angle: the angle between the marker normal and the line from
   the marker centre to the camera centre; $\theta = 0$ is fronto-parallel \\
+$\dhat$ & unit line of sight from the camera centre to the marker centre,
+  $\dhat = \tvec/\|\tvec\|$ \\
 $\qvec^{(i)}$ & camera ray of corner $i$, $\qvec^{(i)} =
   (x_1^{(i)},x_2^{(i)},1)^{\top}$ \\
 $\skewm{\qvec}$ & skew-symmetric matrix with
@@ -560,12 +563,114 @@ With two rows the two implementations agree on both candidates.
 
 % ============================================================
 \section{What the quantities mean geometrically}
+\label{sec:geometry}
 % ============================================================
 
-Let $\theta$ be the viewing angle, the angle between the marker normal and the
-line joining the marker centre to the camera centre, so that $\theta = 0$ is a
-fronto-parallel view. Measured on a $0.5$~m arc with a $0.1$~m square, the
-following holds to machine precision:
+The quantities $\gamma$, $\Rtil$, $\bvec$ and $a$ were introduced as algebraic
+objects. Each of them turns out to have a direct geometric meaning, and the one
+that matters most is $\bvec$.
+
+\subsection{The line of sight and the viewing angle}
+
+Let
+\begin{equation}
+  \dhat \;=\; \frac{\tvec}{\|\tvec\|}
+  \label{eq:dhat}
+\end{equation}
+be the unit vector along the line of sight, from the camera centre to the marker
+centre, expressed in the camera frame. The marker normal in the camera frame is
+the third column $\rvec_3$ of $\Rmat$. The viewing angle $\theta$ is the angle
+between that normal and the direction from the marker back to the camera,
+$-\dhat$; for a marker facing the camera, $0 \le \theta < 90^{\circ}$. Hence
+\begin{equation}
+  \dhat \cdot \rvec_3 \;=\; -\cos\theta .
+  \label{eq:dn}
+\end{equation}
+
+\subsection{The theorem: $\|\bvec\| = \sin\theta$}
+
+\paragraph{Step 1 --- $\bvec$ as dot products.} By \eqref{eq:Ldef},
+$\Lmat = \Rvee^{\top}\Rmat$, and by \eqref{eq:split}, $\bvec$ is the third row of
+the first two columns of $\Lmat$. The entry $(3,j)$ of a product
+$\Rvee^{\top}\Rmat$ is the third column of $\Rvee$ dotted with the $j$-th column
+of $\Rmat$:
+\begin{equation}
+  b_j \;=\; \big(\Rvee\,\evec_3\big) \cdot \rvec_j ,
+  \qquad j = 1,2 .
+  \label{eq:bdot}
+\end{equation}
+
+\paragraph{Step 2 --- $\Rvee\evec_3$ is the line of sight.} By \eqref{eq:Rvdef},
+$\Rvee\evec_3$ is the unit vector along $(v_1,v_2,1)^{\top}$, and by
+\eqref{eq:vdef}, $(v_1,v_2,1)^{\top} = \tvec / t_3$. A unit vector along
+$\tvec$ is $\dhat$, so
+\begin{equation}
+  \Rvee\,\evec_3 \;=\; \dhat
+  \qquad\Longrightarrow\qquad
+  \boxed{\;
+  \bvec \;=\; \begin{pmatrix} \dhat\cdot\rvec_1 \\ \dhat\cdot\rvec_2 \end{pmatrix}
+  \;}
+  \label{eq:bgeo}
+\end{equation}
+Since $\rvec_1$ and $\rvec_2$ are the in-plane axes of the marker, seen from the
+camera, $\bvec$ is the \emph{line of sight projected onto the marker plane}.
+
+\paragraph{Step 3 --- Orthonormality.} The columns $\rvec_1,\rvec_2,\rvec_3$ of
+a rotation form an orthonormal basis, so the squared components of any unit
+vector along them add up to one:
+\begin{equation}
+  (\dhat\cdot\rvec_1)^2 + (\dhat\cdot\rvec_2)^2 + (\dhat\cdot\rvec_3)^2
+  \;=\; \|\dhat\|^2 \;=\; 1 .
+\end{equation}
+The first two terms are $\|\bvec\|^2$ by \eqref{eq:bgeo}, hence
+\begin{equation}
+  \|\bvec\|^2 \;=\; 1 - (\dhat\cdot\rvec_3)^2 .
+\end{equation}
+
+\paragraph{Step 4 --- The viewing angle.} Substituting \eqref{eq:dn},
+\begin{equation}
+  \|\bvec\|^2 = 1 - \cos^2\theta = \sin^2\theta
+  \qquad\Longrightarrow\qquad
+  \boxed{\;\|\bvec\| = \sin\theta\;}
+  \label{eq:bsin}
+\end{equation}
+The identity is exact and holds for \emph{every} pose, not only for particular
+camera paths.
+
+\subsection{The other quantities, for free}
+
+The same reasoning gives the rest of $\Lmat$. Its entry $(3,3)$ is
+$a = \Rvee\evec_3\cdot\rvec_3 = \dhat\cdot\rvec_3$, so by \eqref{eq:dn}
+\begin{equation}
+  a \;=\; -\cos\theta ,
+  \label{eq:acos}
+\end{equation}
+and since $a = \tilde r_{11}\tilde r_{22} - \tilde r_{12}\tilde r_{21}
+= \det\Rtil$ (Step~5), the block $\Rtil$ of a camera-facing marker always has a
+negative determinant. From \eqref{eq:sv} and \eqref{eq:bsin} its singular
+values are
+\begin{equation}
+  \sigma_1(\Rtil) = 1,
+  \qquad
+  \sigma_2(\Rtil) = \sqrt{1-\sin^2\theta} = \cos\theta ,
+  \label{eq:svcos}
+\end{equation}
+and \eqref{eq:gamma} already gave $\gamma = 1/t_3$. Altogether,
+\begin{equation}
+  \gamma = \frac{1}{t_3},
+  \qquad
+  \sigma_2(\Rtil) = \cos\theta,
+  \qquad
+  \|\bvec\| = \sin\theta,
+  \qquad
+  a = -\cos\theta .
+  \label{eq:geometry}
+\end{equation}
+
+\subsection{Numerical confirmation}
+
+On a $0.5$~m arc with a $0.1$~m square, the solver's intermediate values agree
+with \eqref{eq:geometry} to machine precision:
 
 \begin{center}
 \begin{tabular}{@{}rrrrrr@{}}
@@ -583,21 +688,30 @@ $70^{\circ}$ & 2.00000 & 2.00000 & 0.342020 & 0.342020 & 0.93969 \\
 \end{center}
 
 \noindent
-In other words,
-\begin{equation}
-  \gamma = \frac{1}{t_3},
-  \qquad
-  \sigma_2(\Rtil) = \cos\theta,
-  \qquad
-  \|\bvec\| = \sin\theta .
-  \label{eq:geometry}
-\end{equation}
-The interpretation is clean. The matrix $\Rtil$ has singular values $1$ and
-$\cos\theta$: a plane seen obliquely is compressed by a factor $\cos\theta$
-along one direction and left unchanged along the perpendicular one, which is
-exactly foreshortening. And $\|\bvec\|$, the quantity the image derivative
-cannot see, equals $\sin\theta$: it measures how far the plane is tilted out of
-the image plane.
+The identity is not specific to the arc: for the baseline pose, whose viewing
+angle is $17.26^{\circ}$ and whose marker centre is off the optical axis, the
+solver gives $\|\bvec\| = 0.296719 = \sin 17.26^{\circ}$, and its two components
+match $(\dhat\cdot\rvec_1,\ \dhat\cdot\rvec_2)$ entry by entry.
+
+\subsection{Interpretation}
+
+Split the line of sight at the marker into a component along the normal, of
+length $\cos\theta$, and a component lying in the marker plane, of length
+$\sin\theta$. The vector $\bvec$ is exactly that in-plane component. Two facts
+proved earlier now read geometrically:
+\begin{itemize}[leftmargin=*]
+  \item by the cancellation \eqref{eq:cancel}, the image derivative never sees
+        $\bvec$: the local image of the plane does not reveal \emph{towards
+        which side} of the normal the line of sight is tilted;
+  \item by \eqref{eq:bb}, $\bvec$ is fixed only up to sign: the two candidates
+        tilt the plane by the same angle $\theta$ on opposite sides of the line
+        of sight.
+\end{itemize}
+Meanwhile $\Rtil$, whose singular values are $1$ and $\cos\theta$, is the
+foreshortening itself: a plane seen obliquely is compressed by $\cos\theta$
+along one direction and left unchanged along the perpendicular one. The image
+carries the \emph{amount} of tilt, through $\cos\theta$, but not its
+\emph{sign}; that missing sign is the two-pose ambiguity.
 
 \paragraph{The degenerate case.} At $\theta = 0$ the map from the plane to the
 image is a pure similarity, so $\Rtil$ is orthogonal and
