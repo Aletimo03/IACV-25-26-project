@@ -122,6 +122,18 @@ def reprojection_jacobian(
     return jacobian
 
 
+def jacobian_svd(jacobian: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """Singular values, sign-normalised right singular vectors (rows), condition number."""
+    _, singular_values, right_singular_vectors = np.linalg.svd(jacobian)
+    # A singular vector is only defined up to sign; make its largest entry
+    # positive so the same direction reads the same from one pose to the next.
+    largest = np.argmax(np.abs(right_singular_vectors), axis=1)
+    right_singular_vectors *= np.sign(right_singular_vectors[np.arange(6), largest])[:, None]
+    smallest = float(singular_values[-1])
+    condition = float(np.inf if smallest <= np.finfo(np.float64).eps else singular_values[0] / smallest)
+    return singular_values, right_singular_vectors, condition
+
+
 @dataclass(frozen=True)
 class JacobianDiagnostics:
     """SVD and first-order covariance metrics for one nominal pose."""
@@ -144,9 +156,8 @@ def analyze_jacobian(
     if noise_std_px < 0.0:
         raise ValueError("noise_std_px must be non-negative")
     jacobian = reprojection_jacobian(camera, object_points, rotation, translation)
-    singular_values = np.linalg.svd(jacobian, compute_uv=False)
+    singular_values, _, condition = jacobian_svd(jacobian)
     smallest = float(singular_values[-1])
-    condition = float(np.inf if smallest <= np.finfo(np.float64).eps else singular_values[0] / smallest)
     information = jacobian.T @ jacobian
     covariance = noise_std_px**2 * np.linalg.pinv(information, rcond=1e-12)
     return JacobianDiagnostics(

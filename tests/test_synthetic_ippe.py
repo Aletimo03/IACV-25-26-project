@@ -11,7 +11,7 @@ import numpy as np
 from geometry.camera import make_camera
 from geometry.marker import make_square_marker, transform_points
 from experiment1 import plot_viewpoint_sweep, run_viewpoint_sweep
-from experiment2 import run_monte_carlo
+from experiment2 import run_conditioning_sweep, run_monte_carlo
 from ippe_square import ippe_square
 from jacobian import analyze_jacobian, perturb_pose, reprojection_jacobian, reprojection_residuals
 from pipeline import generate_scene, make_ground_truth_pose, pose_error, validate_noiseless_scene
@@ -134,6 +134,33 @@ class ExperimentTests(unittest.TestCase):
             plot_path = plot_viewpoint_sweep(results, Path(directory) / "sweep.png")
             self.assertTrue(plot_path.is_file())
             self.assertGreater(plot_path.stat().st_size, 0)
+
+    def test_conditioning_sweep_matches_fronto_parallel_closed_form(self) -> None:
+        # Head-on, translation in units of Z: sigma_min = 2 f h^2 / Z^2 along an
+        # out-of-plane tilt, and kappa = (Z / h)^2.
+        f, half_side, distance = 800.0, 0.05, 0.5
+        results = run_conditioning_sweep(
+            make_camera(), make_square_marker(), distance, 0.0, 60.0, 7
+        )
+        head_on = results[0]
+        self.assertAlmostEqual(
+            head_on.singular_values[-1], 2 * f * half_side**2 / distance**2, delta=1e-2
+        )
+        self.assertAlmostEqual(head_on.condition_number, (distance / half_side) ** 2, delta=0.1)
+        self.assertGreater(max(abs(head_on.weakest_direction[3:5])), 0.99)
+        for result in results:
+            self.assertTrue(np.all(np.diff(result.singular_values) <= 0.0))
+            np.testing.assert_allclose(
+                result.right_singular_vectors @ result.right_singular_vectors.T,
+                np.eye(6),
+                atol=1e-12,
+            )
+            self.assertAlmostEqual(
+                result.condition_number,
+                result.singular_values[0] / result.singular_values[-1],
+            )
+        smallest = [result.singular_values[-1] for result in results]
+        self.assertTrue(np.all(np.diff(smallest) > 0.0), "obliquity should improve sigma_min")
 
     def test_monte_carlo_is_seeded_and_returns_covariances(self) -> None:
         kwargs = dict(

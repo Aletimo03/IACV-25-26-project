@@ -150,9 +150,28 @@ Two things to know about the code:
 
 ## Experiment 2 (`experiment2.py`)
 
-Work in progress. It currently computes the 8×6 Jacobian per viewpoint with its
-singular values and condition number, then runs 1,000 noisy trials at 5° and
-60° and compares the measured covariance with the first-order prediction.
+Work in progress. It has two parts.
+
+**Conditioning along the arc (done).** At every viewing angle of the same
+0°–89° arc as experiment 1, it evaluates the 8×6 Jacobian at the true pose and
+reports all six singular values, the smallest one, the condition number, and
+the singular vectors, which say *which* pose directions are poorly observed.
+
+- Outputs: `outputs/exp2_conditioning.png` (singular values, condition number,
+  and what the weakest direction is made of) and `outputs/exp2_conditioning.csv`
+  (per angle: σ₁…σ₆, κ, and the two weakest directions).
+- Translation is measured in units of the camera–marker distance, so all six
+  pose parameters are dimensionless: singular values come out in pixels and the
+  condition number is a pure number. In SI units (metres and radians) κ would
+  change with the units chosen — at 30° it goes from 55 to 652 just by switching
+  to millimetres — and two setups producing the same image (a 10 cm marker at
+  0.5 m and a 20 cm one at 1 m) would get different values; with this scaling
+  they get the same. Head-on, κ = (distance / half-side)² = 100.
+- Singular vectors are sign-normalised (largest entry positive) so the same
+  direction reads the same across angles.
+
+**Monte Carlo (still to fix).** It runs 1,000 noisy trials at 5° and 60° and
+compares the measured covariance with the first-order prediction.
 
 Known gap: the prediction assumes a least-squares estimator, whereas the trials
 re-solve with raw IPPE, which is algebraic and unrefined. The two agree well at

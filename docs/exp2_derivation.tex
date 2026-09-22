@@ -1,0 +1,826 @@
+% ============================================================
+%  Experiment 2 --- the reprojection Jacobian and pose observability
+%  Standalone note. Compiles with pdfLaTeX (on Overleaf: just upload it).
+%  Study aid kept alongside the code; it is not included in report.tex.
+% ============================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{booktabs,array,longtable}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue!55!black]{hyperref}
+
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+% --- notation shortcuts (none of these clash with LaTeX built-ins) ---
+\newcommand{\Rset}{\mathbb{R}}
+\newcommand{\Rmat}{\mathbf{R}}
+\newcommand{\Jmat}{\mathbf{J}}
+\newcommand{\Kmat}{\mathbf{K}}
+\newcommand{\Dmat}{\mathbf{D}}
+\newcommand{\Umat}{\mathbf{U}}
+\newcommand{\Vmat}{\mathbf{V}}
+\newcommand{\Smat}{\mathbf{S}}
+\newcommand{\Mmat}{\mathbf{M}}
+\newcommand{\Sigmat}{\boldsymbol{\Sigma}}
+\newcommand{\Idm}{\mathbf{I}}
+\newcommand{\evec}{\mathbf{e}}
+\newcommand{\nvec}{\mathbf{n}}
+\newcommand{\Pvec}{\mathbf{P}}
+\newcommand{\pvec}{\mathbf{p}}
+\newcommand{\tvec}{\mathbf{t}}
+\newcommand{\uvec}{\mathbf{u}}
+\newcommand{\vvec}{\mathbf{v}}
+\newcommand{\wvec}{\mathbf{w}}
+\newcommand{\Xvec}{\mathbf{X}}
+\newcommand{\xvec}{\mathbf{x}}
+\newcommand{\bvec}{\mathbf{b}}
+\newcommand{\avec}{\mathbf{a}}
+\newcommand{\zerovec}{\mathbf{0}}
+\newcommand{\thetavec}{\boldsymbol{\theta}}
+\newcommand{\dth}{\delta\boldsymbol{\theta}}
+\newcommand{\omegavec}{\boldsymbol{\omega}}
+\newcommand{\dom}{\delta\boldsymbol{\omega}}
+\newcommand{\dtv}{\delta\mathbf{t}}
+\newcommand{\skewm}[1]{[#1]_{\times}}
+\newcommand{\Cov}{\operatorname{Cov}}
+
+\title{Experiment 2: the Reprojection Jacobian\\[0.3em]
+       \large Derivation, singular values, and what they say about observability}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent
+The assignment frames pose estimation from an ArUco marker as the minimization
+of the reprojection error
+\[
+  E(\Rmat,\tvec) = \sum_i \big\| \xvec_i - \pi\big(\Kmat(\Rmat\Xvec_i + \tvec)\big)\big\|^2 ,
+\]
+and asks, for every viewing angle, for the Jacobian of the residuals with
+respect to the six pose parameters $\thetavec = (t_x,t_y,t_z,\omega_x,\omega_y,
+\omega_z)$, its singular values, its smallest singular value and its condition
+number, in order to find the directions of the pose that are poorly observable.
+This note derives all of it. Sections~\ref{sec:problem}--\ref{sec:units} are
+general; Section~\ref{sec:frontal} solves the fronto-parallel case in closed
+form; Section~\ref{sec:sweep} gives the numbers along the camera arc.
+
+\medskip\noindent
+\emph{Notation.} The assignment writes the residual vector as $\mathbf{r}$. We
+call it $\evec$, for consistency with the report; nothing else changes.
+
+\tableofcontents
+
+% ============================================================
+\section{Symbols}
+\label{sec:symbols}
+% ============================================================
+
+\begin{longtable}{@{}lp{11.2cm}@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Symbol & Meaning \\
+\midrule
+\endhead
+$N$ & number of corners; here $N = 4$ \\
+$\Xvec_i$ & corner $i$ in the marker frame, $\Xvec_i = (X_i,Y_i,0)^{\top}$ \\
+$\pvec_i$ & observed pixel of corner $i$ (the $\xvec_i$ of the assignment) \\
+$\Rmat,\ \tvec$ & pose, marker frame $\to$ camera frame \\
+$\Pvec_i$ & corner $i$ in the camera frame, $\Pvec_i = \Rmat\Xvec_i + \tvec
+  = (P_{i,1},P_{i,2},P_{i,3})^{\top}$ \\
+$\Kmat$ & intrinsics, with focal lengths $f_x,f_y$ and principal point
+  $(c_x,c_y)$ \\
+$\pi$ & perspective division, $\pi(a,b,c) = (a/c,\ b/c)$ \\
+$\evec_i$ & residual of corner $i$, a vector in $\Rset^2$ (pixels) \\
+$\evec$ & all residuals stacked, a vector in $\Rset^{2N} = \Rset^8$ \\
+$E$ & reprojection cost, $E = \|\evec\|^2$ (pixels$^2$) \\
+$\omegavec$ & local rotation parameters (radians); see
+  Section~\ref{sec:param} \\
+$\thetavec$ & the six pose parameters, $\thetavec = (\tvec,\omegavec)$ \\
+$\dth = (\dtv,\dom)$ & a small change of the six parameters \\
+$\skewm{\avec}$ & skew-symmetric matrix with $\skewm{\avec}\wvec =
+  \avec\times\wvec$ \\
+$\exp(\cdot)$ & matrix exponential; $\exp(\skewm{\omegavec})$ is the rotation by
+  angle $\|\omegavec\|$ about the axis $\omegavec/\|\omegavec\|$ \\
+$\Dmat_i$ & $2\times3$ derivative of the pixel projection with respect to
+  $\Pvec_i$ \\
+$\Jmat$ & the $8\times6$ Jacobian $\partial\evec/\partial\thetavec$ \\
+$\Jmat_i$ & the two rows of $\Jmat$ belonging to corner $i$ \\
+$\Umat,\Sigmat,\Vmat$ & singular value decomposition $\Jmat =
+  \Umat\Sigmat\Vmat^{\top}$ \\
+$\sigma_k$ & $k$-th singular value of $\Jmat$,
+  $\sigma_1 \ge \dots \ge \sigma_6 \ge 0$ \\
+$\vvec_k$ & $k$-th right singular vector: a direction in the space of the six
+  pose parameters \\
+$\uvec_k$ & $k$-th left singular vector: a direction in the space of the eight
+  residuals \\
+$\kappa$ & condition number, $\kappa = \sigma_1/\sigma_6$; from
+  Section~\ref{sec:units} on, of the dimensionless Jacobian $\Jmat_{\mathrm{n}}$ \\
+$\Jmat_{\mathrm{n}}$ & dimensionless Jacobian, $\Jmat_{\mathrm{n}} = \Jmat\Smat$,
+  with translation measured in units of $Z$ \\
+$\kappa_{\mathrm{SI}}$ & condition number of $\Jmat$ itself, translation in metres
+  and rotation in radians \\
+$\nvec$ & pixel noise on the eight observed coordinates \\
+$\sigma_{\mathrm{px}}$ & standard deviation of each noise component (pixels) \\
+$\Smat$ & diagonal rescaling of the parameters,
+  $\Smat = \operatorname{diag}(Z,Z,Z,1,1,1)$; see Section~\ref{sec:units} \\
+$\theta_v$ & viewing angle (to avoid a clash with $\thetavec$) \\
+$h$ & half the side of the square, $h = L/2$ \\
+$Z$ & distance from the camera to the marker centre \\
+$f$ & focal length when $f_x = f_y$ \\
+$s$ & the length $s = h^2/Z$, which appears in Section~\ref{sec:frontal} \\
+\bottomrule
+\end{longtable}
+
+% ============================================================
+\section{The estimation problem}
+\label{sec:problem}
+% ============================================================
+
+For a pose $(\Rmat,\tvec)$, corner $i$ lands in the camera frame at
+$\Pvec_i = \Rmat\Xvec_i + \tvec$ and is projected to the pixel
+\begin{equation}
+  \hat\pvec_i
+  = \pi\big(\Kmat\Pvec_i\big)
+  = \begin{pmatrix}
+      f_x\,P_{i,1}/P_{i,3} + c_x \\[2pt]
+      f_y\,P_{i,2}/P_{i,3} + c_y
+    \end{pmatrix}.
+  \label{eq:proj}
+\end{equation}
+Its residual is the difference between prediction and observation,
+\begin{equation}
+  \evec_i = \hat\pvec_i - \pvec_i \in \Rset^2 ,
+  \label{eq:residual}
+\end{equation}
+and stacking the four corners gives
+\begin{equation}
+  \evec = \begin{pmatrix} \evec_1 \\ \evec_2 \\ \evec_3 \\ \evec_4 \end{pmatrix}
+  \in \Rset^8,
+  \qquad
+  E(\Rmat,\tvec) = \sum_{i=1}^{4}\|\evec_i\|^2 = \|\evec\|^2 .
+  \label{eq:cost}
+\end{equation}
+This is the cost of the assignment (the sign of $\evec_i$ does not matter,
+since it is squared). For reference, the RMSE plotted in Experiment~1 is
+$\sqrt{E/8}$.
+
+\paragraph{Counting.} Four corners give eight equations; the pose has six
+unknowns. The problem is therefore over-determined by two, which is why a
+least-squares formulation is needed at all, and why noise cannot in general be
+fitted exactly.
+
+% ============================================================
+\section{Parametrizing the pose locally}
+\label{sec:param}
+% ============================================================
+
+Translation is a vector, and a small change is simply
+$\tvec \mapsto \tvec + \dtv$. Rotation is not: the set of rotations is curved,
+and adding a small matrix to $\Rmat$ leaves it. Euler angles would avoid that
+but introduce singularities (gimbal lock) and make the Jacobian depend on an
+arbitrary axis order. The standard remedy is a \emph{local} parametrization
+around the current rotation:
+\begin{equation}
+  \Rmat(\dom) = \Rmat\,\exp\!\big(\skewm{\dom}\big),
+  \qquad
+  \skewm{\avec} =
+  \begin{bmatrix}
+    0 & -a_3 & a_2 \\
+    a_3 & 0 & -a_1 \\
+    -a_2 & a_1 & 0
+  \end{bmatrix}.
+  \label{eq:localrot}
+\end{equation}
+For $\dom = \zerovec$ this is $\Rmat$ itself; for small $\dom$ it is a rotation
+by angle $\|\dom\|$ about the axis $\dom/\|\dom\|$, applied \emph{first}, in the
+marker frame, because it multiplies $\Rmat$ on the right. The six parameters are
+\begin{equation}
+  \dth = (\delta t_x,\delta t_y,\delta t_z,\ \delta\omega_x,\delta\omega_y,
+  \delta\omega_z)^{\top},
+  \label{eq:theta}
+\end{equation}
+with translations in metres and rotations in radians. To first order the
+exponential is the identity plus its argument,
+\begin{equation}
+  \exp\!\big(\skewm{\dom}\big) = \Idm + \skewm{\dom} + O(\|\dom\|^2),
+  \label{eq:expfirst}
+\end{equation}
+which is all the Jacobian needs. This is the parametrization implemented in
+\texttt{jacobian.py} (\texttt{perturb\_pose}).
+
+% ============================================================
+\section{Deriving the Jacobian}
+\label{sec:jacobian}
+% ============================================================
+
+The residual depends on the pose only through $\Pvec_i$, so by the chain rule
+\begin{equation}
+  \Jmat_i = \frac{\partial \evec_i}{\partial \dth}
+  = \underbrace{\frac{\partial \hat\pvec_i}{\partial \Pvec_i}}_{\Dmat_i\ (2\times3)}
+    \;
+    \underbrace{\frac{\partial \Pvec_i}{\partial \dth}}_{(3\times6)} .
+  \label{eq:chain}
+\end{equation}
+The observation $\pvec_i$ is a constant and does not contribute.
+
+\subsection{How the camera-frame point moves}
+
+Apply the perturbation to $\Pvec_i$:
+\begin{align}
+  \Pvec_i(\dth)
+  &= \Rmat\,\exp\!\big(\skewm{\dom}\big)\,\Xvec_i + \tvec + \dtv \nonumber \\
+  &\overset{\eqref{eq:expfirst}}{=}
+     \Rmat\Xvec_i + \tvec + \dtv + \Rmat\,\skewm{\dom}\,\Xvec_i
+     + O(\|\dth\|^2) .
+\end{align}
+The last term is $\Rmat(\dom\times\Xvec_i)$. Since the cross product is
+antisymmetric, $\dom\times\Xvec_i = -\Xvec_i\times\dom = -\skewm{\Xvec_i}\dom$,
+so
+\begin{equation}
+  \Pvec_i(\dth) = \Pvec_i + \dtv - \Rmat\,\skewm{\Xvec_i}\,\dom
+  + O(\|\dth\|^2),
+\end{equation}
+and reading off the coefficients of $\dtv$ and $\dom$,
+\begin{equation}
+  \boxed{\;
+  \frac{\partial \Pvec_i}{\partial \dth}
+  = \begin{bmatrix} \Idm_3 & -\Rmat\,\skewm{\Xvec_i} \end{bmatrix}
+  \;}
+  \qquad (3\times6).
+  \label{eq:dPdtheta}
+\end{equation}
+
+\subsection{How the pixel moves with the camera-frame point}
+
+Differentiate \eqref{eq:proj} with respect to $\Pvec_i$. With
+$(X,Y,Z) = (P_{i,1},P_{i,2},P_{i,3})$ for brevity, the quotient rule gives
+\begin{equation}
+  \boxed{\;
+  \Dmat_i = \frac{\partial \hat\pvec_i}{\partial \Pvec_i}
+  = \begin{bmatrix}
+      f_x/Z & 0 & -f_x X/Z^2 \\[2pt]
+      0 & f_y/Z & -f_y Y/Z^2
+    \end{bmatrix}
+  \;}
+  \qquad (2\times3).
+  \label{eq:D}
+\end{equation}
+The first two columns say that moving the point sideways moves its pixel by
+$f/Z$ per metre; the third says that moving it away from the camera pulls the
+pixel towards the principal point.
+
+\subsection{Assembling}
+
+Combining \eqref{eq:chain}, \eqref{eq:dPdtheta} and \eqref{eq:D},
+\begin{equation}
+  \boxed{\;
+  \Jmat_i = \Dmat_i
+  \begin{bmatrix} \Idm_3 & -\Rmat\,\skewm{\Xvec_i} \end{bmatrix}
+  \;}
+  \qquad (2\times6),
+  \label{eq:Ji}
+\end{equation}
+and stacking the four corners,
+\begin{equation}
+  \Jmat = \begin{bmatrix} \Jmat_1 \\ \Jmat_2 \\ \Jmat_3 \\ \Jmat_4 \end{bmatrix}
+  \in \Rset^{8\times6}.
+  \label{eq:J}
+\end{equation}
+So the assignment's guess is right: the Jacobian is $8\times6$. Its first three
+columns have units of pixels per metre, its last three pixels per radian. The
+implementation is \texttt{reprojection\_jacobian} in \texttt{jacobian.py}, and
+the test suite checks it against centred finite differences to a relative
+accuracy of $2\cdot10^{-6}$.
+
+% ============================================================
+\section{What the singular values say}
+\label{sec:svd}
+% ============================================================
+
+\subsection{The decomposition}
+
+Every real $8\times6$ matrix has a singular value decomposition
+\begin{equation}
+  \Jmat = \Umat\,\Sigmat\,\Vmat^{\top}
+  = \sum_{k=1}^{6} \sigma_k\,\uvec_k\,\vvec_k^{\top},
+  \label{eq:svd}
+\end{equation}
+with $\Vmat = [\vvec_1\cdots\vvec_6]$ orthonormal in the space of pose
+parameters, $\Umat = [\uvec_1\cdots\uvec_6]$ orthonormal columns in the space of
+residuals, and $\sigma_1 \ge \dots \ge \sigma_6 \ge 0$. Multiplying by
+$\vvec_k$,
+\begin{equation}
+  \Jmat\,\vvec_k = \sigma_k\,\uvec_k
+  \qquad\Longrightarrow\qquad
+  \|\Jmat\,\vvec_k\| = \sigma_k .
+  \label{eq:Jvk}
+\end{equation}
+
+\paragraph{Reading.} Move the pose by a small amount $\varepsilon$ along
+$\vvec_k$. To first order the residuals change by $\varepsilon\,\sigma_k$ in
+norm. A large $\sigma_k$ means that direction of the pose is clearly visible
+in the image; a small one means the pose can move along $\vvec_k$ while the four
+corners barely move. That is precisely a \emph{poorly observable direction}:
+\begin{itemize}[leftmargin=*]
+  \item $\sigma_6 = \sigma_{\min}$ measures how poorly the worst direction is
+        observed;
+  \item $\vvec_6$ says which combination of the six parameters that worst
+        direction is;
+  \item $\kappa = \sigma_1/\sigma_6$ compares the best and worst observed
+        directions; a large $\kappa$ means the problem is badly balanced.
+\end{itemize}
+If $\sigma_6 = 0$ the pose would be locally unidentifiable along $\vvec_6$. For
+four corners of a square in front of the camera this does not happen short of
+the edge-on limit, so $\Jmat$ has full rank $6$.
+
+\subsection{From singular values to uncertainty}
+
+Why $\sigma_k$ is the right measure becomes precise once noise is added. Let
+$\thetavec^\star$ be the true pose, so that $\evec(\thetavec^\star) =
+\zerovec$ on exact data, and let the observed pixels carry noise $\nvec$. The
+residuals become $\evec(\thetavec) = \evec_0(\thetavec) - \nvec$, where
+$\evec_0$ is the noise-free residual. Linearizing around the truth,
+\begin{equation}
+  \evec(\thetavec^\star + \dth) \approx \Jmat\,\dth - \nvec ,
+\end{equation}
+and the minimizer of $E = \|\evec\|^2$ is the linear least-squares solution
+\begin{equation}
+  \dth = \big(\Jmat^{\top}\Jmat\big)^{-1}\Jmat^{\top}\nvec .
+  \label{eq:gn}
+\end{equation}
+This is also exactly one Gauss--Newton step. If the noise components are
+independent with variance $\sigma_{\mathrm{px}}^2$, that is
+$\Cov(\nvec) = \sigma_{\mathrm{px}}^2\Idm_8$, then
+\begin{equation}
+  \Cov(\dth)
+  = \big(\Jmat^{\top}\Jmat\big)^{-1}\Jmat^{\top}
+    \big(\sigma_{\mathrm{px}}^2\Idm\big)
+    \Jmat\big(\Jmat^{\top}\Jmat\big)^{-1}
+  = \sigma_{\mathrm{px}}^2\big(\Jmat^{\top}\Jmat\big)^{-1}.
+  \label{eq:cov}
+\end{equation}
+Substituting \eqref{eq:svd}, $\Jmat^{\top}\Jmat = \Vmat\Sigmat^2\Vmat^{\top}$,
+so
+\begin{equation}
+  \boxed{\;
+  \Cov(\dth) = \sigma_{\mathrm{px}}^2 \sum_{k=1}^{6}
+    \frac{\vvec_k\vvec_k^{\top}}{\sigma_k^2}
+  \;}
+  \label{eq:covsvd}
+\end{equation}
+The estimate scatters along each $\vvec_k$ with standard deviation
+$\sigma_{\mathrm{px}}/\sigma_k$. The weakest direction $\vvec_6$ carries the
+largest scatter, $\sigma_{\mathrm{px}}/\sigma_{\min}$: small singular values are
+not an abstraction, they are where the pose error goes.
+
+\begin{remark}
+Equation \eqref{eq:cov} describes the minimizer of $E$, linearized around the
+truth. It is a statement about the least-squares estimator the assignment
+defines, not about any solver. A Monte Carlo check must therefore re-estimate
+the pose by minimizing $E$ (for instance Gauss--Newton started from IPPE); raw
+IPPE is algebraic and need not scatter as \eqref{eq:cov} predicts.
+\end{remark}
+
+% ============================================================
+\section{Units, and the convention adopted}
+\label{sec:units}
+% ============================================================
+
+\subsection{The problem}
+
+The six parameters do not share a unit: three are metres, three radians. The
+singular values of $\Jmat$ therefore mix pixels per metre with pixels per
+radian, and $\kappa$ depends on that choice. Rescaling the parameters by a
+diagonal matrix $\Smat$ replaces $\Jmat$ by $\Jmat\Smat$, which has different
+singular values and a different $\kappa$, although nothing physical has
+changed. Two examples make the point.
+\begin{itemize}[leftmargin=*]
+  \item \emph{Changing units.} Measuring translation in millimetres instead of
+        metres moves $\kappa_{\mathrm{SI}}$ at a $30^{\circ}$ view from $55$ to
+        $652$.
+  \item \emph{The same image.} A $10$~cm marker at $0.5$~m and a $20$~cm marker
+        at $1$~m produce exactly the same picture, yet head-on they give
+        $\kappa_{\mathrm{SI}} = 200$ and $100$ respectively.
+\end{itemize}
+A quantity that differs for two identical images is not measuring the
+geometry. It also makes some comparisons meaningless: in metres the depth
+singular value exceeds the spin one, in centimetres it falls below it.
+
+\subsection{The convention}
+
+We measure translation in units of the camera--marker distance
+$Z = \|\tvec\|$:
+\begin{equation}
+  \Jmat_{\mathrm{n}} = \Jmat\,\Smat,
+  \qquad
+  \Smat = \operatorname{diag}(Z,Z,Z,1,1,1).
+  \label{eq:Jn}
+\end{equation}
+A translation of one unit then displaces the marker by about one radian as seen
+from the camera, so both halves of $\thetavec$ are dimensionless and directly
+comparable. Consequences:
+\begin{itemize}[leftmargin=*]
+  \item the singular values of $\Jmat_{\mathrm{n}}$ are in \emph{pixels}, and
+        $\kappa$ is a pure number;
+  \item two setups with the same image get the same $\kappa$ (both examples
+        above give $100$), and $\kappa$ does not depend on the focal length,
+        which scales every singular value alike;
+  \item $\kappa$ still depends on the geometry, as it should: it is set by how
+        large the marker appears (Section~\ref{sec:frontal});
+  \item the rotation columns are untouched, so the singular values and
+        directions of pure rotations do not change.
+\end{itemize}
+From here on, $\sigma_k$, $\vvec_k$ and $\kappa$ refer to $\Jmat_{\mathrm{n}}$,
+and $\kappa_{\mathrm{SI}}$ to $\Jmat$. This is what
+\texttt{run\_conditioning\_sweep} in \texttt{experiment2.py} computes. The
+uncertainty statement \eqref{eq:covsvd} is unaffected, since it rescales
+consistently; the Monte Carlo therefore keeps working with $\Jmat$ in SI units,
+because its covariances are in metres and radians.
+
+% ============================================================
+\section{The fronto-parallel case, in closed form}
+\label{sec:frontal}
+% ============================================================
+
+At a fronto-parallel view every quantity can be computed by hand, and the
+result explains the numbers of Section~\ref{sec:sweep}.
+
+\subsection{Setup}
+
+Take $f_x = f_y = f$, the marker centred on the optical axis at distance $Z$ and
+facing the camera,
+\begin{equation}
+  \Rmat = \operatorname{diag}(1,-1,-1),
+  \qquad
+  \tvec = (0,0,Z)^{\top},
+\end{equation}
+and the corners $\Xvec_i = (x,y,0)^{\top}$ with
+$(x,y) \in \{(-h,h),\,(h,h),\,(h,-h),\,(-h,-h)\}$. This is exactly the
+$0^{\circ}$ pose of the camera arc. Then
+\begin{equation}
+  \Pvec_i = \Rmat\Xvec_i + \tvec = (x,\ -y,\ Z)^{\top}:
+\end{equation}
+all four corners are at the same depth $Z$.
+
+\subsection{The two rows of each corner}
+
+From \eqref{eq:D} with $P_{i,1} = x$, $P_{i,2} = -y$, $P_{i,3} = Z$,
+\begin{equation}
+  \Dmat_i = \frac{f}{Z}
+  \begin{bmatrix} 1 & 0 & -x/Z \\ 0 & 1 & y/Z \end{bmatrix}.
+\end{equation}
+For the rotation block, $\skewm{\Xvec_i}$ with $\Xvec_i = (x,y,0)^{\top}$ and
+$\Rmat = \operatorname{diag}(1,-1,-1)$ give
+\begin{equation}
+  \skewm{\Xvec_i} =
+  \begin{bmatrix} 0 & 0 & y \\ 0 & 0 & -x \\ -y & x & 0 \end{bmatrix},
+  \qquad
+  -\Rmat\,\skewm{\Xvec_i} =
+  \begin{bmatrix} 0 & 0 & -y \\ 0 & 0 & -x \\ -y & x & 0 \end{bmatrix}.
+\end{equation}
+Multiplying out \eqref{eq:Ji}, the two rows of corner $i$, in the parameter
+order $(t_x,t_y,t_z,\omega_x,\omega_y,\omega_z)$, are
+\begin{align}
+  \text{$u$-row:}\quad
+  &\frac{f}{Z}\Big(\,1,\ \ 0,\ \ -\frac{x}{Z},\ \ \frac{xy}{Z},\ \
+     -\frac{x^2}{Z},\ \ -y\Big), \label{eq:urow}\\
+  \text{$v$-row:}\quad
+  &\frac{f}{Z}\Big(\,0,\ \ 1,\ \ \frac{y}{Z},\ \ -\frac{y^2}{Z},\ \
+     \frac{xy}{Z},\ \ -x\Big). \label{eq:vrow}
+\end{align}
+
+\subsection{The normal matrix is block diagonal}
+
+$\Jmat^{\top}\Jmat$ is the sum over the four corners of the outer products of
+these rows. The square is symmetric, so sums of odd powers vanish:
+\begin{equation}
+  \sum_i x = \sum_i y = \sum_i xy = \sum_i x^3 = \sum_i x^2 y
+  = \sum_i x y^2 = 0,
+\end{equation}
+while
+\begin{equation}
+  \sum_i x^2 = \sum_i y^2 = 4h^2,
+  \qquad
+  \sum_i x^4 = \sum_i y^4 = \sum_i x^2y^2 = 4h^4 .
+\end{equation}
+Carrying out the sums entry by entry, almost every off-diagonal term cancels,
+and what remains is block diagonal:
+\begin{equation}
+  \frac{\Jmat^{\top}\Jmat}{(f/Z)^2}
+  =
+  \underbrace{\begin{bmatrix} 4 & -4s \\ -4s & 8s^2 \end{bmatrix}}
+    _{(t_x,\ \omega_y)}
+  \oplus
+  \underbrace{\begin{bmatrix} 4 & -4s \\ -4s & 8s^2 \end{bmatrix}}
+    _{(t_y,\ \omega_x)}
+  \oplus
+  \underbrace{\Big[\,\tfrac{8h^2}{Z^2}\,\Big]}_{t_z}
+  \oplus
+  \underbrace{\big[\,8h^2\,\big]}_{\omega_z},
+  \qquad
+  s = \frac{h^2}{Z}.
+  \label{eq:blocks}
+\end{equation}
+For example, the $(t_x,\omega_y)$ entry is $\sum_i 1\cdot(-x^2/Z) = -4h^2/Z =
+-4s$, and the $(\omega_y,\omega_y)$ entry is $\sum_i (x^4 + x^2y^2)/Z^2 =
+8h^4/Z^2 = 8s^2$. The structure is already telling: \emph{each out-of-plane
+rotation is coupled to one sideways translation} ($\omega_y$ with $t_x$,
+$\omega_x$ with $t_y$), while depth $t_z$ and in-plane spin $\omega_z$ decouple
+from everything.
+
+\subsection{The singular values}
+
+The singular values of $\Jmat$ are $f/Z$ times the square roots of the
+eigenvalues of the blocks. The two scalar blocks give at once
+\begin{equation}
+  \sigma_{t_z} = \frac{2\sqrt2\,f h}{Z^2},
+  \qquad
+  \sigma_{\omega_z} = \frac{2\sqrt2\,f h}{Z}.
+\end{equation}
+Each $2\times2$ block has trace $4 + 8s^2$ and determinant
+$4\cdot8s^2 - 16s^2 = 16s^2$, so its eigenvalues are
+\begin{equation}
+  \lambda_\pm = \frac{(4+8s^2) \pm \sqrt{(4+8s^2)^2 - 64s^2}}{2}.
+\end{equation}
+The marker is small compared with its distance, $s = h^2/Z \ll 1$ (here
+$s = 0.005$~m), so to leading order $\lambda_+ \approx 4$ and
+$\lambda_- \approx \det/\operatorname{tr} \approx 16s^2/4 = 4s^2$. Hence
+\begin{equation}
+  \sigma_{\max} \approx \frac{2f}{Z}
+  \ \ (\text{twice}),
+  \qquad
+  \boxed{\;\sigma_{\min} \approx \frac{2 f h^2}{Z^2}
+  \ \ (\text{twice})\;}
+  \label{eq:sigmas}
+\end{equation}
+and the condition number is
+\begin{equation}
+  \kappa_{\mathrm{SI}} \approx \frac{2f/Z}{2fh^2/Z^2} = \frac{Z}{h^2}
+  \quad(\text{units of } 1/\mathrm{m}).
+  \label{eq:kappa}
+\end{equation}
+\paragraph{In the adopted units.} By \eqref{eq:Jn} the three translation columns
+are multiplied by $Z$, which multiplies the translation singular values by $Z$
+and leaves the rotation ones alone:
+\begin{equation}
+  \sigma_{t_x} = \sigma_{t_y} \approx 2f,
+  \qquad
+  \sigma_{t_z} = \sigma_{\omega_z} = \frac{2\sqrt2\,f h}{Z},
+  \qquad
+  \sigma_{\min} \approx \frac{2 f h^2}{Z^2},
+  \qquad
+  \boxed{\;\kappa \approx \Big(\frac{Z}{h}\Big)^2\;}
+  \label{eq:sigmasn}
+\end{equation}
+For $\sigma_{\min}$ this is not obvious from the block alone; redoing the
+$2\times2$ eigenvalue computation with $t_x$ measured in units of $Z$ gives the
+same leading-order value, because the tilt direction is almost pure rotation.
+The dimensionless $\kappa$ depends only on $h/Z$, the marker's apparent
+half-size: \emph{the conditioning degrades as the inverse square of how large
+the marker looks.} Note also that depth and in-plane spin become exactly equally
+observable head-on, which Section~\ref{sec:pairs} explains.
+
+\subsection{The weak directions, and why they are weak}
+
+The eigenvector of $\lambda_-$ in the $(t_x,\omega_y)$ block solves
+$(4-\lambda_-)\,\delta t_x - 4s\,\delta\omega_y = 0$, so
+$\delta t_x \approx s\,\delta\omega_y$:
+\begin{equation}
+  \vvec_{5,6} \;\propto\; (s,0,0,0,1,0)^{\top}
+  \quad\text{and}\quad
+  (0,s,0,1,0,0)^{\top}.
+  \label{eq:weakdirs}
+\end{equation}
+The two least observable directions are the two \emph{out-of-plane tilts},
+each accompanied by a small sideways translation of $s = h^2/Z$ metres per
+radian; in the adopted units that coefficient becomes $s/Z = (h/Z)^2$.
+
+Rows \eqref{eq:urow}--\eqref{eq:vrow} show why. A tilt $\delta\omega_y$ moves
+corner $i$ by
+\begin{equation}
+  \delta u_i = -\frac{f}{Z}\frac{x^2}{Z}\,\delta\omega_y
+             = -\frac{f h^2}{Z^2}\,\delta\omega_y ,
+  \qquad
+  \delta v_i = \frac{f}{Z}\frac{xy}{Z}\,\delta\omega_y
+             = \pm\frac{f h^2}{Z^2}\,\delta\omega_y ,
+\end{equation}
+because $x^2 = h^2$ at every corner. The $u$-motion is the \emph{same for all
+four corners}: a uniform sideways shift, which a translation
+$\delta t_x = s\,\delta\omega_y$ reproduces exactly and therefore cancels. What
+is left is the $v$-motion, whose sign follows $xy$: two opposite corners move
+up and the other two down, a small \emph{keystone} distortion of the square.
+That keystone is the only first-order evidence of the tilt, and its size is
+$f h^2/Z^2$ per radian per corner, which over four corners gives
+$\sigma_{\min} = 2fh^2/Z^2$ to leading order in $s$.
+
+Physically: head-on, tilting the marker changes its image only through
+perspective, the fact that one edge comes slightly closer than the other. That
+effect is of order $h/Z$ \emph{smaller} than the effect of moving the marker,
+hence the factor $h^2/Z^2$ against $1/Z$.
+
+\subsection{Check against the implementation}
+
+With $f = 800$~px, $h = 0.05$~m, $Z = 0.5$~m, the formulas and the code agree:
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{SI units ($\Jmat$)}
+ & \multicolumn{2}{c}{adopted units ($\Jmat_{\mathrm{n}}$)} \\
+Quantity & closed form & code & closed form & code \\
+\midrule
+$\sigma_{t_x} = \sigma_{t_y}$ & $3200.0$ & $3200.04$ & $1600.0$ & $1600.08$ \\
+$\sigma_{t_z}$ & $452.548$ & $452.548$ & $226.274$ & $226.274$ \\
+$\sigma_{\omega_z}$ & $226.274$ & $226.274$ & $226.274$ & $226.274$ \\
+$\sigma_{\min}$ (twice) & $16.000$ & $15.9998$ & $16.000$ & $15.9992$ \\
+$\kappa$ & $Z/h^2 = 200$ & $200.005$ & $(Z/h)^2 = 100$ & $100.010$ \\
+coupling in $\vvec_{5,6}$ & $0.005$ & $0.005$ & $0.010$ & $0.010$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The small differences in $\sigma_{\max}$ and $\kappa$ are the neglected
+$O(s^2)$ terms; the exact eigenvalues reproduce the code to every digit.
+
+% ============================================================
+\section{Along the camera arc}
+\label{sec:sweep}
+% ============================================================
+
+For oblique views the algebra no longer closes, and the numbers come from
+\texttt{run\_conditioning\_sweep} in \texttt{experiment2.py}, which evaluates
+$\Jmat_{\mathrm{n}}$ at the true pose of each viewpoint ($Z = 0.5$~m, azimuth
+$0^{\circ}$, one sample per degree); they are also written to
+\texttt{outputs/exp2\_conditioning.csv} and plotted in
+\texttt{outputs/exp2\_conditioning.png}. Singular values are in pixels. Along
+this arc $Z$ is constant, so $\kappa_{\mathrm{SI}} = \kappa/Z = 2\kappa$.
+
+\begin{center}
+\small
+\begin{tabular}{@{}rrrrrrrrl@{}}
+\toprule
+$\theta_v$ & $\sigma_1$ & $\sigma_2$ & $\sigma_3$ & $\sigma_4$ & $\sigma_5$
+  & $\sigma_6$ & $\kappa$ & weakest $\vvec_6$ \\
+\midrule
+$0^{\circ}$  & 1600.1 & 1600.1 & 226.3 & 226.3 & 16.0  & 16.0  & 100.0
+  & $\omega_x + 0.010\,t_y$ \\
+$5^{\circ}$  & 1600.3 & 1600.3 & 226.1 & 226.1 & 18.9  & 18.5  & 86.4
+  & $\omega_x - 0.04\,\omega_z$ \\
+$15^{\circ}$ & 1601.7 & 1601.7 & 224.6 & 224.5 & 34.1  & 32.3  & 49.6
+  & $\omega_x - 0.13\,\omega_z$ \\
+$30^{\circ}$ & 1606.2 & 1606.1 & 219.5 & 219.1 & 61.8  & 58.2  & 27.6
+  & $\omega_x - 0.26\,\omega_z$ \\
+$45^{\circ}$ & 1612.3 & 1612.1 & 210.8 & 210.0 & 89.7  & 85.1  & 18.9
+  & $\omega_x - 0.38\,\omega_z$ \\
+$60^{\circ}$ & 1618.4 & 1618.2 & 198.7 & 197.0 & 116.4 & 111.6 & 14.5
+  & $\omega_x - 0.51\,\omega_z$ \\
+$75^{\circ}$ & 1622.9 & 1622.7 & 183.2 & 180.3 & 141.0 & 136.8 & 11.9
+  & $\omega_x - 0.65\,\omega_z$ \\
+$89^{\circ}$ & 1624.5 & 1624.3 & 168.3 & 162.8 & 159.0 & 157.2 & 10.3
+  & $\omega_z - 0.28\,\omega_x$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Which motion each singular value belongs to}
+\label{sec:pairs}
+
+The singular vectors attach every singular value to one clear motion of the
+marker, and the geometry explains why they come in pairs.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{$\sigma_1,\sigma_2$ --- sideways translations $t_x,t_y$.}
+        Sliding the marker sideways moves all four corners together. They are
+        equal because a square looks the same after a $90^{\circ}$ turn, so
+        sliding along $x$ or along $y$ is the same situation; along the arc the
+        tilt breaks this symmetry only by $0.02\%$. They stay nearly constant
+        because they depend on $f$ and $Z$ alone, both fixed on the arc; the
+        slight rise comes from the near edge of a tilted marker moving closer.
+  \item \textbf{$\sigma_3,\sigma_4$ --- depth $t_z$ and in-plane spin
+        $\omega_z$.} Moving the marker closer by one unit of $Z$ zooms the image
+        and moves each corner, at distance $r = h\sqrt2$ from the centre,
+        outwards by $f r/Z$ pixels; spinning it by one radian moves each corner
+        along a circle by the same $f r/Z$. Same corner motion, same singular
+        value: $2\sqrt2\,fh/Z$ head-on. Both shrink as the view becomes oblique,
+        because a tilted marker looks narrower (foreshortened by
+        $\cos\theta_v$), and they drift apart by up to $3\%$ at grazing angles.
+        In SI units the two would differ by a factor $Z$, and their order would
+        depend on the unit of length.
+  \item \textbf{$\sigma_5,\sigma_6$ --- the two out-of-plane tilts.} Equal
+        head-on by the same $90^{\circ}$ symmetry, and tiny because a tilt then
+        shows only as a keystone (Section~\ref{sec:frontal}). The arc tilts the
+        marker about its own $Y$ axis, which breaks the symmetry: rotating
+        further about that axis ($\omega_y$) and about the other ($\omega_x$) no
+        longer look alike, and the two values separate.
+\end{itemize}
+
+\paragraph{Observations.}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{The problem is worst conditioned head-on.} $\sigma_{\min}$
+        rises tenfold from $16$ to $157$ across the sweep, and $\kappa$ falls
+        from $100$ to $10$. The fronto-parallel view, often assumed to be the
+        easy case, is the least observable one.
+  \item \textbf{The weak directions are always rotations.} $\sigma_5$ and
+        $\sigma_6$ belong to out-of-plane rotations at every angle. The
+        second-weakest direction stays close to $\omega_y$, the axis of the
+        viewing-angle tilt itself; the weakest starts as $\omega_x$ and
+        progressively mixes with the in-plane spin $\omega_z$.
+  \item \textbf{Translation is always well observed.} $\sigma_1$ and $\sigma_2$,
+        the two sideways translations, stay near $2f$ throughout.
+  \item \textbf{Why obliquity helps.} Head-on, an out-of-plane rotation moves
+        the corners along the line of sight, and shows up only through the
+        keystone, of relative size $h/Z$. Once the plane is tilted by
+        $\theta_v$, the same rotation also moves each corner
+        \emph{perpendicular} to the line of sight, by an amount proportional to
+        $\sin\theta_v$ and with opposite signs on opposite edges. No translation
+        can reproduce that, so the evidence becomes first order in $h/Z$ and
+        the weakest singular value grows with the tilt.
+\end{itemize}
+
+% ============================================================
+\section{Connection with Experiment 1}
+\label{sec:link}
+% ============================================================
+
+The two experiments look at the same geometry from two sides. Experiment~1
+showed that the two IPPE candidates differ only by the sign of $\bvec$, the line
+of sight projected onto the marker plane, of length $\sin\theta_v$; the image
+reveals how much the marker is tilted but not towards which side. This note
+shows that, near head-on, the out-of-plane tilts are also the least observable
+directions of the least-squares problem, and that their only first-order
+signature is a perspective keystone of relative size $h/Z$. Both statements say
+that a planar marker seen head-on constrains its own tilt weakly, and both
+predict that small or distant markers make things worse.
+
+% ============================================================
+\section{What to expect from the Monte Carlo}
+\label{sec:mc}
+% ============================================================
+
+Equation \eqref{eq:covsvd} turns the table into predictions. With
+$\sigma_{\mathrm{px}} = 0.5$~px, the standard deviation along the weakest
+direction is $\sigma_{\mathrm{px}}/\sigma_{\min}$:
+\begin{center}
+\begin{tabular}{@{}rrr@{}}
+\toprule
+$\theta_v$ & $\sigma_{\mathrm{px}}/\sigma_{\min}$ (rad) & in degrees \\
+\midrule
+$0^{\circ}$  & $0.0313$ & $1.79^{\circ}$ \\
+$30^{\circ}$ & $0.0086$ & $0.49^{\circ}$ \\
+$60^{\circ}$ & $0.0045$ & $0.26^{\circ}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+while sideways translations scatter by only $0.5/3200 \approx 0.16$~mm (these
+use $\Jmat$ in SI units, as a covariance in metres and radians must; the tilt
+values are the same in either convention). Two caveats follow from the rest of
+this note.
+\begin{enumerate}[leftmargin=*]
+  \item The prediction holds for the minimizer of $E$, so the Monte Carlo must
+        refine each estimate by minimizing $E$ (Gauss--Newton with $\Jmat$,
+        started from IPPE), not use raw IPPE.
+  \item It is a first-order, single-minimum statement. Near head-on the mirror
+        candidate is almost as good as the true one (Experiment~1), so noise can
+        send the estimate to the wrong minimum. There the scatter is no longer
+        Gaussian around the truth, and a disagreement with \eqref{eq:covsvd} is
+        expected rather than a failure.
+\end{enumerate}
+
+% ============================================================
+\section{Summary}
+% ============================================================
+
+\begin{enumerate}[leftmargin=*]
+  \item Residuals $\evec_i = \pi(\Kmat(\Rmat\Xvec_i+\tvec)) - \pvec_i$, stacked
+        into $\evec\in\Rset^8$; cost $E = \|\evec\|^2$.
+  \item Local parameters $\dth = (\dtv,\dom)$ with
+        $\Rmat \mapsto \Rmat\exp(\skewm{\dom})$.
+  \item $\Jmat_i = \Dmat_i\,[\,\Idm \mid -\Rmat\skewm{\Xvec_i}\,]$, with
+        $\Dmat_i$ from \eqref{eq:D}; stacked, $\Jmat\in\Rset^{8\times6}$.
+  \item $\Jmat = \Umat\Sigmat\Vmat^{\top}$; $\sigma_k$ is how visible the pose
+        direction $\vvec_k$ is; $\sigma_{\min}$ and $\vvec_6$ identify the least
+        observable direction; $\kappa = \sigma_1/\sigma_6$, computed on the
+        dimensionless Jacobian $\Jmat_{\mathrm{n}} = \Jmat\Smat$ (translation in
+        units of $Z$) so that it does not depend on the choice of units.
+  \item Under pixel noise $\sigma_{\mathrm{px}}$, the least-squares estimate
+        scatters along $\vvec_k$ with standard deviation
+        $\sigma_{\mathrm{px}}/\sigma_k$.
+  \item Head-on, in closed form: $\sigma_{\min} \approx 2fh^2/Z^2$ along the
+        out-of-plane tilts, and $\kappa \approx (Z/h)^2$, the inverse square of
+        the marker's apparent half-size ($\kappa_{\mathrm{SI}} \approx Z/h^2$).
+  \item Along the arc: $\sigma_{\min}$ grows from $16$ to $157$ and $\kappa$ falls
+        from $100$ to $10$; the least observable direction is always an
+        out-of-plane rotation.
+\end{enumerate}
+
+\end{document}
