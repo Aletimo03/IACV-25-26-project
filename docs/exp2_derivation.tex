@@ -763,13 +763,22 @@ that a planar marker seen head-on constrains its own tilt weakly, and both
 predict that small or distant markers make things worse.
 
 % ============================================================
-\section{What to expect from the Monte Carlo}
+\section{The Monte Carlo check}
 \label{sec:mc}
 % ============================================================
 
-Equation \eqref{eq:covsvd} turns the table into predictions. With
-$\sigma_{\mathrm{px}} = 0.5$~px, the standard deviation along the weakest
-direction is $\sigma_{\mathrm{px}}/\sigma_{\min}$:
+The assignment closes Experiment~2 by asking to compare the prediction with a
+Monte Carlo simulation in which noise is added to the corners. This section
+describes how that simulation is built and what it gives. It is implemented in
+\texttt{experiment2.py} (\texttt{run\_monte\_carlo}) and writes
+\texttt{outputs/exp2\_montecarlo.png} and \texttt{.csv}.
+
+\subsection{The prediction being tested}
+
+Equation \eqref{eq:covsvd} says that the least-squares estimate scatters along
+each singular direction $\vvec_k$ with standard deviation
+$\sigma_{\mathrm{px}}/\sigma_k$. With $\sigma_{\mathrm{px}} = 0.5$~px, along the
+weakest direction:
 \begin{center}
 \begin{tabular}{@{}rrr@{}}
 \toprule
@@ -783,18 +792,142 @@ $60^{\circ}$ & $0.0045$ & $0.26^{\circ}$ \\
 \end{center}
 while sideways translations scatter by only $0.5/3200 \approx 0.16$~mm (these
 use $\Jmat$ in SI units, as a covariance in metres and radians must; the tilt
-values are the same in either convention). Two caveats follow from the rest of
-this note.
+values are the same in either convention).
+
+\subsection{The estimator: minimizing $E$}
+
+The prediction describes the \emph{minimizer of $E$}, which is how the
+assignment defines the pose, so each noisy trial must produce exactly that. The
+assignment does not say how to minimize $E$; since $E$ is a sum of squared
+non-linear residuals, the natural tool is Gauss--Newton, which needs nothing but
+the Jacobian already derived. Starting from a pose $(\Rmat,\tvec)$, it repeats
+\begin{align}
+  \evec &\leftarrow \evec(\Rmat,\tvec), \qquad
+  \Jmat \leftarrow \Jmat(\Rmat,\tvec), \nonumber \\
+  \dth &= -\big(\Jmat^{\top}\Jmat\big)^{-1}\Jmat^{\top}\evec ,
+  \label{eq:gnstep} \\
+  \tvec &\leftarrow \tvec + \dtv, \qquad
+  \Rmat \leftarrow \Rmat\exp\!\big(\skewm{\dom}\big), \nonumber
+\end{align}
+until $\|\dth\| < 10^{-10}$: about $5$ iterations at oblique views, about $15$
+near head-on, where the step has to crawl along the weak tilt direction. Each
+step \eqref{eq:gnstep} is the minimizer of the linearized cost
+$\|\evec + \Jmat\,\dth\|^2$. Evaluated at the true pose, where $\evec = -\nvec$,
+it is exactly \eqref{eq:gn}: the prediction \emph{is} one Gauss--Newton step, and
+the Monte Carlo tests whether the full, iterated minimization behaves as that
+first-order picture says.
+
+\paragraph{Starting points.} Gauss--Newton is local, and for a planar marker
+$E$ has two valleys, around the true pose and around its mirror. IPPE supplies
+one starting point in each: both candidates are refined and the one with the
+lower $E$ is kept (\texttt{estimate\_pose}). The result does not depend on the
+starting point within a valley: on the same noisy data, Gauss--Newton started
+from IPPE and started from the true pose reached the same estimate in $300$ out
+of $300$ trials at $5^{\circ}$ and at $30^{\circ}$, to within $10^{-11}$ degrees.
+Raw IPPE, by contrast, lies $2.7^{\circ}$ from that minimizer at $5^{\circ}$
+(median), more than the predicted scatter itself; this is why an earlier version
+of the simulation, which used raw IPPE, disagreed with the prediction near
+head-on.
+
+\subsection{Procedure}
+
+At each viewing angle, for $N = 2500$ trials:
 \begin{enumerate}[leftmargin=*]
-  \item The prediction holds for the minimizer of $E$, so the Monte Carlo must
-        refine each estimate by minimizing $E$ (Gauss--Newton with $\Jmat$,
-        started from IPPE), not use raw IPPE.
-  \item It is a first-order, single-minimum statement. Near head-on the mirror
-        candidate is almost as good as the true one (Experiment~1), so noise can
-        send the estimate to the wrong minimum. There the scatter is no longer
-        Gaussian around the truth, and a disagreement with \eqref{eq:covsvd} is
-        expected rather than a failure.
+  \item add independent Gaussian noise of $\sigma_{\mathrm{px}} = 0.5$~px to each
+        of the eight corner coordinates;
+  \item estimate the pose as above;
+  \item record the error in the Jacobian's own coordinates,
+        $\dtv = \hat\tvec - \tvec$ and $\dom = \log(\Rmat^{\top}\hat\Rmat)$;
+  \item count the trial as a \emph{mirror flip} if $\hat\Rmat$ is closer to the
+        mirror pose (IPPE's other candidate on exact data) than to the true one.
+        At $\theta_v = 0$ the mirror coincides with the true pose, so no flip is
+        possible there.
 \end{enumerate}
+The statistics are computed on the trials that stayed in the true valley, since
+the first-order prediction describes a single minimum; flips are reported
+separately. Three comparisons are made:
+\begin{itemize}[leftmargin=*]
+  \item per parameter, the ratio of measured to predicted standard deviation;
+        a standard deviation estimated from $N$ trials has relative
+        uncertainty $1/\sqrt{2(N-1)}$, so a $\pm2\sigma$ band is
+        $\pm2/\sqrt{2(N-1)} = \pm2.8\%$;
+  \item along the weakest direction, the measured standard deviation of the
+        errors projected on $\vvec_6$ (in the units of
+        Section~\ref{sec:units}) against $\sigma_{\mathrm{px}}/\sigma_6$;
+  \item the fraction of flips.
+\end{itemize}
+The angles are dense near head-on ($0^{\circ}$, $0.5^{\circ}$, $1^{\circ}$,
+$2^{\circ}$, \dots, $8^{\circ}$), where the mirror can win, then every
+$5^{\circ}$ up to $85^{\circ}$.
+
+\subsection{Results}
+
+\begin{center}
+\small
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+ & & \multicolumn{2}{c}{std ratio (measured/predicted)}
+ & \multicolumn{2}{c}{weakest direction (degrees)} \\
+$\theta_v$ & mirror flips & $\omega_y$ & $t_x$ & predicted & measured \\
+\midrule
+$0^{\circ}$   & $0$            & $1.023$ & $1.012$ & $1.791$ & $1.824$ \\
+$0.5^{\circ}$ & $953$ ($38\%$) & $0.679$ & $0.841$ & $1.788$ & $1.881$ \\
+$1^{\circ}$   & $694$ ($28\%$) & $0.694$ & $0.841$ & $1.778$ & $1.801$ \\
+$2^{\circ}$   & $333$ ($13\%$) & $0.817$ & $0.901$ & $1.744$ & $1.849$ \\
+$3^{\circ}$   & $127$ ($5\%$)  & $0.903$ & $0.952$ & $1.690$ & $1.758$ \\
+$4^{\circ}$   & $35$ ($1.4\%$) & $0.996$ & $1.006$ & $1.622$ & $1.608$ \\
+$6^{\circ}$   & $6$ ($0.2\%$)  & $1.017$ & $0.994$ & $1.466$ & $1.507$ \\
+$10^{\circ}$  & $0$            & $1.021$ & $0.995$ & $1.164$ & $1.168$ \\
+$30^{\circ}$  & $0$            & $1.005$ & $0.996$ & $0.492$ & $0.495$ \\
+$60^{\circ}$  & $0$            & $1.001$ & $0.996$ & $0.257$ & $0.258$ \\
+$85^{\circ}$  & $0$            & $0.997$ & $1.000$ & $0.188$ & $0.186$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The other four parameters stay close to $1$ at every angle; from $4^{\circ}$
+on, all six ratios lie within $3.6\%$ of $1$, against a statistical band of
+$\pm2.8\%$.
+
+\subsection{Interpretation}
+
+\paragraph{The prediction holds.} From $4^{\circ}$ to $85^{\circ}$, and at
+$0^{\circ}$, the measured scatter matches $\sigma_{\mathrm{px}}^2
+(\Jmat^{\top}\Jmat)^{-1}$ within statistical noise, per parameter and along the
+weakest direction, which falls from $1.8^{\circ}$ head-on to $0.19^{\circ}$ at
+$85^{\circ}$. The scatter also goes where the conditioning analysis said: into
+the out-of-plane tilt, while translations stay at a fraction of a millimetre.
+
+\paragraph{Where it stops holding: $0.5^{\circ}$ to $3^{\circ}$.} In this band
+three effects appear together, with a single cause: the mirror pose lies inside
+the noise.
+\begin{itemize}[leftmargin=*]
+  \item \emph{Flips.} The mirror is the true pose rotated by $2\theta_v$ about the
+        marker's $Y$ axis. Near head-on that is well within the tilt scatter of
+        about $1.8^{\circ}$, so noise often makes the mirror fit better: $38\%$
+        of the trials at $0.5^{\circ}$, tending to a coin toss as
+        $\theta_v \to 0$, and none from $8^{\circ}$ on. This is the ambiguity of
+        Experiment~1, measured under noise.
+  \item \emph{Truncation.} Because the mirror lies along $\omega_y$, the trials
+        that flip are precisely those with the largest $\omega_y$ errors, and
+        excluding them makes the remaining $\omega_y$ distribution look too
+        narrow: ratios down to $0.68$. $t_x$ follows, being coupled to
+        $\omega_y$ (Section~\ref{sec:frontal}). A ratio below $1$ here does not
+        mean $\omega_y$ is better observed; it means the prediction no longer
+        applies.
+  \item \emph{A slightly larger scatter along $\vvec_6$}, by $3$--$6\%$: with two
+        minima this close, $E$ is flatter than the quadratic bowl the
+        first-order analysis assumes.
+\end{itemize}
+At exactly $0^{\circ}$ the two valleys merge into one, and the prediction holds
+again.
+
+\paragraph{Conclusion.} Outside the narrow band in which the mirror solution
+overlaps with the true one, the Jacobian predicts the Monte Carlo scatter to
+within statistical noise. Inside it, the single-minimum assumption behind the
+prediction fails, exactly where Experiment~1 said the two solutions are hard to
+tell apart.
 
 % ============================================================
 \section{Summary}
@@ -821,6 +954,14 @@ this note.
   \item Along the arc: $\sigma_{\min}$ grows from $16$ to $157$ and $\kappa$ falls
         from $100$ to $10$; the least observable direction is always an
         out-of-plane rotation.
+  \item The pose is estimated as the minimizer of $E$ by Gauss--Newton,
+        started from both IPPE candidates; one Gauss--Newton step at the truth
+        is exactly the covariance prediction.
+  \item Monte Carlo, $2500$ trials per angle: the prediction holds within
+        statistical noise at $0^{\circ}$ and from $4^{\circ}$ to $85^{\circ}$.
+        Between $0.5^{\circ}$ and $3^{\circ}$ the mirror pose lies inside the
+        noise and wins up to $38\%$ of the trials, which also truncates the
+        $\omega_y$ statistics.
 \end{enumerate}
 
 \end{document}

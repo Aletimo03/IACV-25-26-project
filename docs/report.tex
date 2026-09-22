@@ -874,48 +874,503 @@ of the problem worse.
 \label{sec:experiment2}
 % ============================================================
 
+The second experiment treats pose estimation from the marker as the
+least-squares problem of minimizing the reprojection cost $E(\mathbf{R},\mathbf{t})$
+of \eqref{eq:cost}. It addresses two questions. First, how stable is that
+minimization with respect to noise on the four corners, as measured by the
+conditioning of its Jacobian at every viewing angle, and which directions of
+the pose are poorly observable? Second, does the uncertainty predicted from the
+Jacobian agree with a Monte Carlo simulation in which noise is added to the
+corners? Section~\ref{sec:jacobian} derives the Jacobian and
+Section~\ref{sec:svd} relates its singular values to the uncertainty of the
+estimate. Section~\ref{sec:units} fixes the units in which conditioning is
+measured, Section~\ref{sec:frontal} solves the fronto-parallel case in closed
+form, and Section~\ref{sec:conditioning} reports the conditioning along the
+camera arc. Section~\ref{sec:montecarlo} presents the Monte Carlo validation and
+Section~\ref{sec:exp2-discussion} draws the conclusions.
+
 % ------------------------------------------------------------
 \subsection{The Residual Jacobian}
+\label{sec:jacobian}
 % ------------------------------------------------------------
 
-Pose estimation from a marker is, in its general form, the minimization of the
-reprojection cost $E(\mathbf{R},\mathbf{t})$ of \eqref{eq:cost}. This experiment
-asks how sensitive that minimization is to noise on the corners, which is a
-question about the derivatives of $E$ at the solution.
+Let $\mathbf{e}\in\R^{8}$ stack the residuals \eqref{eq:residual} of the four
+corners, so that $E = \|\mathbf{e}\|^2$. Four corners provide eight equations
+for the six unknowns of the pose, so the problem is over-determined by two and
+noise cannot in general be fitted exactly.
 
-Let $\mathbf{e}\in\R^{8}$ stack the scalar residuals \eqref{eq:residual} of the
-four corners, so that $E = \|\mathbf{e}\|^2$. For a local pose increment
-ordered as
+\paragraph{Local parametrization.} Translation is perturbed additively,
+$\mathbf{t}\mapsto\mathbf{t}+\delta\mathbf{t}$. Rotation is perturbed through a
+local rotation vector applied on the right,
+\begin{equation}
+  \mathbf{R}(\delta\boldsymbol{\omega})
+  = \mathbf{R}\exp\!\big([\delta\boldsymbol{\omega}]_\times\big),
+  \qquad
+  \exp\!\big([\delta\boldsymbol{\omega}]_\times\big)
+  = \mathbf{I} + [\delta\boldsymbol{\omega}]_\times + O(\|\delta\boldsymbol{\omega}\|^2),
+  \label{eq:local-rotation}
+\end{equation}
+so that $\delta\boldsymbol{\omega}$ is expressed in the marker frame. The six
+pose parameters are ordered as
 \begin{equation}
   \delta\boldsymbol{\theta} =
   (\delta t_x,\delta t_y,\delta t_z,
    \delta\omega_x,\delta\omega_y,\delta\omega_z)^\top,
+  \label{eq:theta}
 \end{equation}
-the rotation update is right-multiplied,
-$\mathbf{R}'=\mathbf{R}\exp([\delta\boldsymbol{\omega}]_\times)$. For a
-marker point $\mathbf{X}$ this gives
+with translations in metres and rotations in radians. Euler angles are avoided:
+they introduce singularities and make the Jacobian depend on an arbitrary axis
+order.
+
+\paragraph{Derivation.} The residual of corner $i$ depends on the pose only
+through the camera-frame point $\Pcam^{(i)} = \mathbf{R}\,\Pmark^{(i)} +
+\mathbf{t}$, so by the chain rule its Jacobian is the product of two factors.
+Substituting \eqref{eq:local-rotation} and using
+$[\delta\boldsymbol{\omega}]_\times\Pmark = \delta\boldsymbol{\omega}\times\Pmark
+= -[\Pmark]_\times\delta\boldsymbol{\omega}$ gives the first,
 \begin{equation}
- \frac{\partial \Pcam}{\partial \delta\boldsymbol{\theta}}
- = \begin{bmatrix}\mathbf{I} & -\mathbf{R}[\mathbf{X}]_\times\end{bmatrix}.
+  \frac{\partial \Pcam^{(i)}}{\partial \delta\boldsymbol{\theta}}
+  = \begin{bmatrix}\mathbf{I}_3 & -\mathbf{R}\,[\Pmark^{(i)}]_\times\end{bmatrix}
+  \qquad (3\times6).
 \end{equation}
-Combining it with the pinhole derivative produces an $8\times6$ analytic
-Jacobian. Its singular values, smallest singular value, and condition number
-quantify local sensitivity. With independent image-coordinate noise of
-standard deviation $\sigma_{px}$, the first-order covariance prediction is
+Differentiating the pixel projection \eqref{eq:pixel-projection} with respect to
+$\Pcam = (X,Y,Z)^\top$ gives the second,
 \begin{equation}
+  \mathbf{D}_i
+  = \begin{bmatrix}
+      f_x/Z & 0 & -f_x X/Z^2 \\[2pt]
+      0 & f_y/Z & -f_y Y/Z^2
+    \end{bmatrix}
+  \qquad (2\times3),
+\end{equation}
+so that
+\begin{equation}
+  \boxed{\quad
+  \mathbf{J}_i = \mathbf{D}_i
+  \begin{bmatrix}\mathbf{I}_3 & -\mathbf{R}\,[\Pmark^{(i)}]_\times\end{bmatrix},
+  \qquad
+  \mathbf{J} = \begin{bmatrix}\mathbf{J}_1\\ \mathbf{J}_2\\ \mathbf{J}_3\\ \mathbf{J}_4\end{bmatrix}
+  \in \R^{8\times6}.
+  \quad}
+  \label{eq:jacobian}
+\end{equation}
+The first three columns of $\mathbf{J}$ are in pixels per metre and the last
+three in pixels per radian. The principal point does not enter $\mathbf{J}$.
+
+\paragraph{Verification.} The implementation (\code{reprojection\_jacobian})
+was compared with centred finite differences computed independently of the
+project code: the projection was rewritten from scratch and the rotation was
+perturbed with SciPy rather than with the project's exponential map. At the
+baseline pose and at six viewpoints of the arc, including a camera with
+$f_x \neq f_y$ and a shifted principal point, the two agree to a relative
+accuracy of $2\cdot10^{-11}$.
+
+% ------------------------------------------------------------
+\subsection{Singular Values and Observability}
+\label{sec:svd}
+% ------------------------------------------------------------
+
+The singular value decomposition
+\begin{equation}
+  \mathbf{J} = \mathbf{U}\boldsymbol{\Sigma}\mathbf{V}^\top
+  = \sum_{k=1}^{6}\sigma_k\,\mathbf{u}_k\mathbf{v}_k^\top,
+  \qquad \sigma_1\ge\dots\ge\sigma_6,
+\end{equation}
+satisfies $\mathbf{J}\mathbf{v}_k = \sigma_k\mathbf{u}_k$. Moving the pose by a
+small amount $\varepsilon$ along the right singular vector $\mathbf{v}_k$
+changes the residuals by $\varepsilon\,\sigma_k$ in norm. A large $\sigma_k$
+therefore marks a direction of the pose that is clearly visible in the image,
+and a small one a direction along which the pose can move while the corners
+barely do. The smallest singular value $\sigma_{\min} = \sigma_6$ measures how
+poorly the worst direction is observed, $\mathbf{v}_6$ identifies that
+direction, and the condition number $\kappa = \sigma_1/\sigma_6$ compares the
+best and worst observed directions.
+
+\paragraph{From singular values to uncertainty.} Let the observed pixels carry
+independent noise $\mathbf{n}$ with $\operatorname{Cov}(\mathbf{n}) =
+\sigma_{px}^2\mathbf{I}$. Linearizing the residuals around the true pose,
+$\mathbf{e}(\delta\boldsymbol{\theta}) \approx \mathbf{J}\,\delta\boldsymbol{\theta}
+- \mathbf{n}$, the minimizer of $E$ is the linear least-squares solution
+\begin{equation}
+  \delta\boldsymbol{\theta}
+  = \big(\mathbf{J}^\top\mathbf{J}\big)^{-1}\mathbf{J}^\top\mathbf{n},
+  \label{eq:gn-at-truth}
+\end{equation}
+whose covariance is
+\begin{equation}
+  \boxed{\quad
   \operatorname{Cov}(\delta\boldsymbol{\theta})
-  \approx \sigma_{px}^2(\mathbf{J}^\top\mathbf{J})^{-1}.
+  = \sigma_{px}^2\big(\mathbf{J}^\top\mathbf{J}\big)^{-1}
+  = \sigma_{px}^2\sum_{k=1}^{6}\frac{\mathbf{v}_k\mathbf{v}_k^\top}{\sigma_k^2}.
+  \quad}
+  \label{eq:covariance}
 \end{equation}
-Translation is expressed in metres and rotation in radians, so these units
-are part of the stated conditioning convention.
+The estimate thus scatters along each $\mathbf{v}_k$ with standard deviation
+$\sigma_{px}/\sigma_k$: the weakest direction carries the largest error. The
+prediction describes the minimizer of $E$; Section~\ref{sec:montecarlo} returns
+to this point.
+
+% ------------------------------------------------------------
+\subsection{Units and the Dimensionless Jacobian}
+\label{sec:units}
+% ------------------------------------------------------------
+
+The six parameters do not share a unit, so the singular values of $\mathbf{J}$
+mix pixels per metre with pixels per radian, and the condition number depends
+on that choice. Measuring translation in millimetres instead of metres moves the
+condition number at a $30^\circ$ view from $55$ to $652$, although nothing
+physical has changed. More tellingly, a $10$~cm marker at $0.5$~m and a
+$20$~cm marker at $1$~m produce exactly the same image, yet in SI units they
+have condition numbers $200$ and $100$ head-on.
+
+We therefore measure translation in units of the camera--marker distance
+$Z = \|\mathbf{t}\|$ and work with the dimensionless Jacobian
+\begin{equation}
+  \mathbf{J}_{\mathrm{n}} = \mathbf{J}\,\mathbf{S},
+  \qquad
+  \mathbf{S} = \operatorname{diag}(Z,Z,Z,1,1,1).
+  \label{eq:dimensionless}
+\end{equation}
+A translation of one unit then displaces the marker by about one radian as seen
+from the camera, so all six parameters are dimensionless and comparable. The
+singular values of $\mathbf{J}_{\mathrm{n}}$ are in pixels and its condition
+number $\kappa$ is a pure number: identical images give identical values, and
+$\kappa$ does not depend on the focal length. The rotation columns are
+unaffected. From here on, $\sigma_k$, $\mathbf{v}_k$ and $\kappa$ refer to
+$\mathbf{J}_{\mathrm{n}}$; the covariances of \eqref{eq:covariance} remain in
+metres and radians.
+
+% ------------------------------------------------------------
+\subsection{The Fronto-Parallel Case in Closed Form}
+\label{sec:frontal}
+% ------------------------------------------------------------
+
+At a fronto-parallel view the Jacobian can be analysed by hand. Let
+$f_x = f_y = f$, let the marker face the camera at distance $Z$ on the optical
+axis, $\mathbf{R} = \operatorname{diag}(1,-1,-1)$ and $\mathbf{t} =
+(0,0,Z)^\top$, and let the corners be $\Pmark = (x,y,0)^\top$ with
+$x,y\in\{\pm h\}$ and $h = L/2$. This is the $0^\circ$ pose of the camera arc.
+All four corners lie at depth $Z$, and \eqref{eq:jacobian} gives, for each
+corner and in the order \eqref{eq:theta}, the two rows
+\begin{align}
+  \text{$u$-row:}\quad
+  &\frac{f}{Z}\Big(1,\ 0,\ -\frac{x}{Z},\ \frac{xy}{Z},\ -\frac{x^2}{Z},\ -y\Big),
+  \nonumber\\
+  \text{$v$-row:}\quad
+  &\frac{f}{Z}\Big(0,\ 1,\ \frac{y}{Z},\ -\frac{y^2}{Z},\ \frac{xy}{Z},\ -x\Big).
+  \label{eq:frontal-rows}
+\end{align}
+By the symmetry of the square, sums of odd powers of $x$ and $y$ vanish, and
+$\mathbf{J}^\top\mathbf{J}$ becomes block diagonal:
+\begin{equation}
+  \frac{\mathbf{J}^\top\mathbf{J}}{(f/Z)^2}
+  =
+  \underbrace{\begin{bmatrix} 4 & -4s \\ -4s & 8s^2 \end{bmatrix}}_{(t_x,\,\omega_y)}
+  \oplus
+  \underbrace{\begin{bmatrix} 4 & -4s \\ -4s & 8s^2 \end{bmatrix}}_{(t_y,\,\omega_x)}
+  \oplus
+  \underbrace{\Big[\tfrac{8h^2}{Z^2}\Big]}_{t_z}
+  \oplus
+  \underbrace{\big[8h^2\big]}_{\omega_z},
+  \qquad s = \frac{h^2}{Z}.
+\end{equation}
+Each out-of-plane rotation is coupled to one sideways translation, while depth
+and in-plane spin decouple. Since the marker is small compared with its
+distance, $s \ll 1$, and to leading order the singular values of the
+dimensionless Jacobian \eqref{eq:dimensionless} are
+\begin{equation}
+  \sigma_{t_x} = \sigma_{t_y} \approx 2f,
+  \qquad
+  \sigma_{t_z} = \sigma_{\omega_z} = \frac{2\sqrt2\,fh}{Z},
+  \qquad
+  \sigma_{\min} \approx \frac{2fh^2}{Z^2},
+  \qquad
+  \boxed{\;\kappa \approx \Big(\frac{Z}{h}\Big)^2\;}
+  \label{eq:frontal-sigmas}
+\end{equation}
+The condition number head-on depends only on the marker's apparent half-size
+$h/Z$: \emph{the conditioning degrades as the inverse square of how large the
+marker appears.}
+
+\paragraph{Why the tilts are the weak directions.} The eigenvectors of the small
+eigenvalues are the two out-of-plane tilts, each accompanied by a small sideways
+translation. Rows \eqref{eq:frontal-rows} show why. Since $x^2 = h^2$ at every
+corner, a tilt $\delta\omega_y$ moves all four corners horizontally by the same
+amount, $-fh^2/Z^2$ per radian; that uniform shift is reproduced exactly by a
+sideways translation and therefore cancels. What remains is the vertical motion,
+whose sign follows $xy$: two opposite corners move up and the other two down, a
+small keystone distortion of the square. Head-on, that keystone is the only
+first-order evidence of a tilt, and its size is of order $h/Z$ smaller than the
+effect of translating the marker.
+
+Table~\ref{tab:frontal} compares \eqref{eq:frontal-sigmas} with the
+implementation for $f = 800$~px, $h = 0.05$~m and $Z = 0.5$~m. The small
+differences are the neglected terms of order $s^2$.
+
+\begin{table}[h!]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}Yrr@{}}
+\toprule
+\rowcolor{accent}\thcell{Quantity}&\thcell{Closed form}&\thcell{Implementation}\\
+\midrule
+$\sigma_{t_x} = \sigma_{t_y}$ & $1600.0$ & $1600.08$\\
+\rowcolor{lightbg} $\sigma_{t_z}$ & $226.274$ & $226.274$\\
+$\sigma_{\omega_z}$ & $226.274$ & $226.274$\\
+\rowcolor{lightbg} $\sigma_{\min}$ (twice) & $16.000$ & $15.9992$\\
+$\kappa$ & $(Z/h)^2 = 100$ & $100.010$\\
+\bottomrule
+\end{tabularx}
+\caption{Fronto-parallel view: closed-form singular values of the dimensionless
+Jacobian against the implementation.}
+\label{tab:frontal}
+\end{table}
+
+% ------------------------------------------------------------
+\subsection{Conditioning Along the Camera Arc}
+\label{sec:conditioning}
+% ------------------------------------------------------------
+
+Away from the fronto-parallel view the algebra no longer closes, and the
+Jacobian is evaluated numerically (\code{run\_conditioning\_sweep}) at the true
+pose of every viewpoint of the arc of Experiment~1: radius $0.5$~m, azimuth
+$0^\circ$, one viewpoint per degree from $0^\circ$ to $89^\circ$.
+Figure~\ref{fig:conditioning} shows the result and Table~\ref{tab:conditioning}
+lists representative values.
+
+\resultfigure{exp2_conditioning.png}
+ {Singular values, condition number and composition of the weakest direction against the viewing angle.}
+ {Conditioning of the dimensionless reprojection Jacobian along the camera arc.
+ Top: the six singular values; $\sigma_1 = \sigma_2$ and $\sigma_3 \approx \sigma_4$,
+ so $\sigma_2$ is drawn $10\%$ lower and $\sigma_3$ $10\%$ higher for visibility.
+ Middle: the condition number $\kappa = \sigma_1/\sigma_6$. Bottom: the share of
+ each pose parameter in the least observable direction $\mathbf{v}_6$ (squared
+ components); $t_x$, $t_y$, $t_z$ and $\omega_y$ together stay below $0.01\%$ at
+ every angle. Generated by \code{experiment2.py}.}
+ {fig:conditioning}
+
+\begin{table}[h!]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}rrrrrrrrY@{}}
+\toprule
+\rowcolor{accent}\thcell{$\theta$}&\thcell{$\sigma_1$}&\thcell{$\sigma_2$}&\thcell{$\sigma_3$}&\thcell{$\sigma_4$}&\thcell{$\sigma_5$}&\thcell{$\sigma_6$}&\thcell{$\kappa$}&\thcell{Weakest direction}\\
+\midrule
+$0^\circ$ & 1600.1 & 1600.1 & 226.3 & 226.3 & 16.0 & 16.0 & 100.0 & $\omega_x + 0.010\,t_y$\\
+\rowcolor{lightbg} $5^\circ$ & 1600.3 & 1600.3 & 226.1 & 226.1 & 18.9 & 18.5 & 86.4 & $\omega_x - 0.04\,\omega_z$\\
+$15^\circ$ & 1601.7 & 1601.7 & 224.6 & 224.5 & 34.1 & 32.3 & 49.6 & $\omega_x - 0.13\,\omega_z$\\
+\rowcolor{lightbg} $30^\circ$ & 1606.2 & 1606.1 & 219.5 & 219.1 & 61.8 & 58.2 & 27.6 & $\omega_x - 0.26\,\omega_z$\\
+$45^\circ$ & 1612.3 & 1612.1 & 210.8 & 210.0 & 89.7 & 85.1 & 18.9 & $\omega_x - 0.38\,\omega_z$\\
+\rowcolor{lightbg} $60^\circ$ & 1618.4 & 1618.2 & 198.7 & 197.0 & 116.4 & 111.6 & 14.5 & $\omega_x - 0.51\,\omega_z$\\
+$75^\circ$ & 1622.9 & 1622.7 & 183.2 & 180.3 & 141.0 & 136.8 & 11.9 & $\omega_x - 0.65\,\omega_z$\\
+\rowcolor{lightbg} $89^\circ$ & 1624.5 & 1624.3 & 168.3 & 162.8 & 159.0 & 157.2 & 10.3 & $\omega_z - 0.28\,\omega_x$\\
+\bottomrule
+\end{tabularx}
+\caption{Singular values (pixels) and condition number of the dimensionless
+Jacobian along the arc, with the dominant components of the least observable
+direction.}
+\label{tab:conditioning}
+\end{table}
+
+\paragraph{Which motion each singular value belongs to.} The singular vectors
+attach every singular value to one motion of the marker, and the geometry
+explains why they come in pairs.
+\begin{itemize}[leftmargin=*]
+  \item $\sigma_1,\sigma_2$ belong to the two sideways translations. Sliding the
+        marker moves all four corners together; the two are equal because a
+        square is unchanged by a $90^\circ$ turn, and they stay nearly constant
+        because they depend only on $f$ and $Z$, both fixed along the arc.
+  \item $\sigma_3,\sigma_4$ belong to depth and in-plane spin. Bringing the
+        marker closer by one unit of $Z$ zooms the image and moves each corner,
+        at distance $r = h\sqrt2$ from the centre, outwards by $fr/Z$ pixels;
+        spinning it by one radian moves each corner along a circle by the same
+        amount. Both decrease as the marker is foreshortened.
+  \item $\sigma_5,\sigma_6$ belong to the two out-of-plane tilts. They are equal
+        head-on by the same symmetry and small because a tilt then shows only as
+        a keystone. The arc tilts the marker about its own $Y$ axis, which breaks
+        the symmetry and separates them.
+\end{itemize}
+
+\paragraph{Reading the condition number.} A larger $\kappa$ means a worse
+conditioned problem: the pose is then determined very unevenly, precisely in
+some directions and loosely in others. The fronto-parallel view is the worst
+case, $\kappa = 100$, and the conditioning improves steeply with obliquity:
+$\kappa$ halves by $15^\circ$ and reaches about $28$ at $30^\circ$, after which
+the gains are small, down to $10$ at $89^\circ$. Since $\sigma_1$ is essentially
+constant, the whole trend is carried by $\sigma_6$, which grows tenfold from
+$16$ to $157$. The reason is geometric. Head-on, a small out-of-plane rotation
+moves the corners only along the line of sight and is visible solely through the
+keystone. Once the plane is oblique, the same rotation also moves the corners
+perpendicular to the line of sight, with opposite signs on opposite edges, which
+no translation can reproduce, so the evidence becomes first order in $h/Z$.
+
+\paragraph{The least observable direction.} It is always a rotation and never a
+translation: the three translations and $\omega_y$ together never exceed
+$0.01\%$ of $\mathbf{v}_6$. Up to about $20^\circ$ it is a pure out-of-plane tilt
+$\omega_x$, the marker nodding about its horizontal axis, perpendicular to the
+axis about which the camera moves along the arc. As the view becomes oblique it
+acquires an in-plane spin component, and near $89^\circ$ it becomes mostly
+$\omega_z$: seen almost edge-on, spinning the marker in its own plane moves the
+corners along the line of sight, which the image hardly registers.
 
 % ------------------------------------------------------------
 \subsection{Monte Carlo Validation}
+\label{sec:montecarlo}
 % ------------------------------------------------------------
 
-For Monte Carlo validation, independent zero-mean Gaussian noise is added to
-each of the eight scalar image coordinates. Repeated pose estimates at a
-near-frontal and an oblique view yield empirical local-pose covariances, which
-are compared directly with the Jacobian-based covariance prediction above.
+\subsubsection{The estimator}
+
+Equation \eqref{eq:covariance} describes the \emph{minimizer of $E$}, so the
+simulation must produce exactly that estimate. Since $E$ is a sum of squared
+non-linear residuals, it is minimized with Gauss--Newton, which requires only
+the Jacobian \eqref{eq:jacobian}. Starting from a pose, each iteration evaluates
+$\mathbf{e}$ and $\mathbf{J}$, computes the step
+\begin{equation}
+  \delta\boldsymbol{\theta}
+  = -\big(\mathbf{J}^\top\mathbf{J}\big)^{-1}\mathbf{J}^\top\mathbf{e},
+  \label{eq:gauss-newton}
+\end{equation}
+which minimizes the linearized cost $\|\mathbf{e}+\mathbf{J}\,\delta\boldsymbol{\theta}\|^2$,
+and updates $\mathbf{t}\leftarrow\mathbf{t}+\delta\mathbf{t}$ and
+$\mathbf{R}\leftarrow\mathbf{R}\exp([\delta\boldsymbol{\omega}]_\times)$, until
+$\|\delta\boldsymbol{\theta}\| < 10^{-10}$. At the true pose, where
+$\mathbf{e} = -\mathbf{n}$, the step \eqref{eq:gauss-newton} is exactly
+\eqref{eq:gn-at-truth}: the prediction is one Gauss--Newton step, and the
+simulation tests whether the full, iterated minimization behaves as that
+first-order picture states.
+
+Gauss--Newton is local, and for a planar marker $E$ has two valleys, around the
+true pose and around its mirror. IPPE supplies one starting point in each: both
+candidates are refined and the one with the lower cost is kept
+(\code{estimate\_pose}). The result does not depend on the starting point within
+a valley: on the same noisy data, Gauss--Newton started from the IPPE candidates
+and from the true pose reached the same estimate in all of $300$ trials at
+$5^\circ$ and at $30^\circ$, to within $10^{-11}$ degrees. Raw IPPE, by contrast,
+lies $2.7^\circ$ from that minimizer at $5^\circ$ (median), more than the
+predicted scatter itself, so it could not be used in place of the minimizer.
+
+\subsubsection{Procedure}
+
+At each viewing angle $N = 2500$ trials are run. Each trial adds independent
+Gaussian noise with $\sigma_{px} = 0.5$~px to the eight corner coordinates,
+estimates the pose as above, and records its error in the coordinates of the
+Jacobian, $\delta\mathbf{t} = \hat{\mathbf{t}} - \mathbf{t}$ and
+$\delta\boldsymbol{\omega} = \log(\mathbf{R}^\top\hat{\mathbf{R}})$. A trial is
+counted as a \emph{mirror flip} when the estimated rotation is closer to the
+mirror pose (IPPE's second candidate on exact data) than to the true one; at
+$0^\circ$ the two coincide and no flip is possible. Statistics are computed on
+the trials that remained in the valley of the true pose, since
+\eqref{eq:covariance} describes a single minimum, and flips are reported
+separately. Three comparisons are made: the ratio of measured to predicted
+standard deviation for each parameter, whose statistical uncertainty over $N$
+trials gives a $\pm2\sigma$ band of $\pm2/\sqrt{2(N-1)} = \pm2.8\%$; the measured
+scatter along $\mathbf{v}_6$ against $\sigma_{px}/\sigma_6$; and the fraction of
+flips. The viewing angles are dense near head-on, $0^\circ$, $0.5^\circ$,
+$1^\circ$, $2^\circ$, \dots, $8^\circ$, where the mirror can win, and every
+$5^\circ$ from $10^\circ$ to $85^\circ$.
+
+\subsubsection{Results}
+
+\resultfigure{exp2_montecarlo.png}
+ {Measured against predicted scatter per parameter, scatter along the weakest direction, and mirror flips against the viewing angle.}
+ {Monte Carlo validation, $2500$ trials per angle, $\sigma_{px} = 0.5$~px.
+ Top: ratio of measured to predicted standard deviation for each pose
+ parameter; the grey band is the $\pm2\sigma$ statistical uncertainty. Middle:
+ standard deviation along the least observable direction, measured against the
+ prediction $\sigma_{px}/\sigma_6$. Bottom: percentage of trials in which the
+ mirror pose was selected, on $0^\circ$--$15^\circ$. Generated by
+ \code{experiment2.py}.}
+ {fig:montecarlo}
+
+\begin{table}[h!]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}rYrrrr@{}}
+\toprule
+\rowcolor{accent}\thcell{$\theta$}&\thcell{Mirror flips}&\thcell{Ratio $\omega_y$}&\thcell{Ratio $t_x$}&\thcell{$\mathbf{v}_6$ pred.\ ($^\circ$)}&\thcell{$\mathbf{v}_6$ meas.\ ($^\circ$)}\\
+\midrule
+$0^\circ$ & $0$ & $1.023$ & $1.012$ & $1.791$ & $1.824$\\
+\rowcolor{lightbg} $0.5^\circ$ & $953$ ($38\%$) & $0.679$ & $0.841$ & $1.788$ & $1.881$\\
+$1^\circ$ & $694$ ($28\%$) & $0.694$ & $0.841$ & $1.778$ & $1.801$\\
+\rowcolor{lightbg} $2^\circ$ & $333$ ($13\%$) & $0.817$ & $0.901$ & $1.744$ & $1.849$\\
+$3^\circ$ & $127$ ($5\%$) & $0.903$ & $0.952$ & $1.690$ & $1.758$\\
+\rowcolor{lightbg} $4^\circ$ & $35$ ($1.4\%$) & $0.996$ & $1.006$ & $1.622$ & $1.608$\\
+$6^\circ$ & $6$ ($0.2\%$) & $1.017$ & $0.994$ & $1.466$ & $1.507$\\
+\rowcolor{lightbg} $10^\circ$ & $0$ & $1.021$ & $0.995$ & $1.164$ & $1.168$\\
+$30^\circ$ & $0$ & $1.005$ & $0.996$ & $0.492$ & $0.495$\\
+\rowcolor{lightbg} $60^\circ$ & $0$ & $1.001$ & $0.996$ & $0.257$ & $0.258$\\
+$85^\circ$ & $0$ & $0.997$ & $1.000$ & $0.188$ & $0.186$\\
+\bottomrule
+\end{tabularx}
+\caption{Monte Carlo results at representative angles. Ratios are measured over
+predicted standard deviations. The other four parameters stay close to $1$ at
+every angle; from $4^\circ$ onwards all six lie within $3.6\%$ of $1$.}
+\label{tab:montecarlo}
+\end{table}
+
+\subsubsection{Interpretation}
+
+\paragraph{The prediction holds.} At $0^\circ$ and from $4^\circ$ to $85^\circ$,
+the measured scatter agrees with $\sigma_{px}^2(\mathbf{J}^\top\mathbf{J})^{-1}$
+within statistical noise, both parameter by parameter and along the least
+observable direction, whose standard deviation falls from $1.8^\circ$ head-on to
+$0.19^\circ$ at $85^\circ$. The error also concentrates where the conditioning
+analysis placed it: in the out-of-plane rotations, while the sideways
+translations scatter by about $0.2$~mm at every angle.
+
+\paragraph{Where it stops holding.} Between $0.5^\circ$ and $3^\circ$ three
+effects appear together, with a single cause: the mirror pose lies within the
+noise.
+\begin{itemize}[leftmargin=*]
+  \item \emph{Mirror flips.} The mirror is the true pose rotated by $2\theta$
+        about the marker's $Y$ axis. Near head-on this is within the tilt
+        scatter of about $1.8^\circ$, and noise frequently makes the mirror the
+        better fit: $38\%$ of the trials at $0.5^\circ$, tending to one half as
+        $\theta\to0$, and none from $8^\circ$ onwards. In those trials the noisy
+        corners genuinely fit the mirror better, so no estimator based on the
+        four corners alone could avoid the error. This is the ambiguity of
+        Experiment~1 measured under noise.
+  \item \emph{Truncated statistics.} Because the mirror lies along $\omega_y$,
+        the trials that flip are those with the largest $\omega_y$ errors, and
+        excluding them makes the remaining distribution too narrow: ratios down
+        to $0.68$. The translation $t_x$, coupled to $\omega_y$
+        (Section~\ref{sec:frontal}), follows. A ratio below one therefore
+        signals that the single-minimum prediction no longer applies, not that
+        $\omega_y$ is better observed.
+  \item \emph{A slightly larger scatter along $\mathbf{v}_6$}, by $3$--$6\%$:
+        with two minima this close, $E$ is flatter than the quadratic bowl
+        assumed by the first-order analysis.
+\end{itemize}
+At exactly $0^\circ$ the two valleys merge into one, and the prediction holds
+again.
+
+% ------------------------------------------------------------
+\subsection{Discussion}
+\label{sec:exp2-discussion}
+% ------------------------------------------------------------
+
+\paragraph{Fronto-parallel is the worst case.} Contrary to the intuition that
+looking straight at a marker is the easy configuration, the fronto-parallel view
+is the least well conditioned. Its condition number is $(Z/h)^2$: doubling the
+distance, or halving the marker, makes it four times worse.
+
+\paragraph{What is lost is orientation, not position.} The least observable
+direction is always a rotation. With $\sigma_{px} = 0.5$~px, the out-of-plane
+tilt is uncertain by $1.8^\circ$ head-on, $0.5^\circ$ at $30^\circ$ and
+$0.26^\circ$ at $60^\circ$, while the sideways position is determined to a
+fraction of a millimetre throughout. A modest obliquity of $20^\circ$--$30^\circ$
+secures most of the improvement.
+
+\paragraph{The first-order theory is validated.} With the pose estimated as the
+minimizer of $E$, the Jacobian predicts the Monte Carlo scatter within
+statistical noise everywhere except in a narrow band near head-on.
+
+\paragraph{The two experiments describe one phenomenon.} Experiment~1 showed that
+the two IPPE candidates differ by the sign of a vector of length
+$\sin\theta$, \eqref{eq:b-sin}, so that near head-on the image
+reveals how much the marker is tilted but hardly towards which side.
+Experiment~2 shows that the same out-of-plane tilt is the least observable
+direction of the least-squares problem, with a first-order signature of relative
+size $h/Z$ only. The Monte Carlo joins the two: the prediction fails exactly in
+the band where the mirror solution lies within the noise and is selected in up
+to $38\%$ of the trials.
+\FloatBarrier
 
 \end{document}
