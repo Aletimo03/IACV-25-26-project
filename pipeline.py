@@ -92,7 +92,7 @@ def generate_scene() -> dict[str, object]:
         camera, object_points, image_points
     )
     opencv_solutions = _opencv_ippe_square_solutions(object_points, image_points, camera.K)
-    rotation_cv, translation_cv, cv_error = opencv_solutions[0]
+    rotation_cv, translation_cv, _ = opencv_solutions[0]
     return {
         "marker_side": config.MARKER_SIDE_M,
         "object_points": object_points,
@@ -108,9 +108,9 @@ def generate_scene() -> dict[str, object]:
         "reprojection_error_custom": custom_error,
         "solutions_custom": info["solutions"],
         "gamma": info["gamma"],
+        "homography": info["homography"],
         "R_cv": rotation_cv,
         "t_cv": translation_cv,
-        "reprojection_error_cv": cv_error,
         "solutions_cv": opencv_solutions,
     }
 
@@ -201,6 +201,23 @@ def _print_baseline(scene: dict[str, object]) -> None:
             f"  {index:<8} {camera_point[0]:+.4f}    {camera_point[1]:+.4f}    "
             f"{camera_point[2]:+.4f}     {pixel[0]:8.3f}   {pixel[1]:8.3f}"
         )
+
+    print("\n[Step 6] Pose recovery: the IPPE intermediates")
+    homography = scene["homography"]
+    homography_gt = np.column_stack(
+        [rotation_gt[:, 0], rotation_gt[:, 1], translation_gt]
+    ) / translation_gt[2]
+    print("    H (marker plane -> normalized image, h33 = 1) =")
+    print(_matrix_lines(homography))
+    print(f"    max |H - [r1 r2 t]/t_z of the ground truth| = "
+          f"{np.abs(homography - homography_gt).max():.3e}")
+    print(f"    centre of the square in the image: v = (h13, h23) = "
+          f"({homography[0, 2]:+.6f}, {homography[1, 2]:+.6f})"
+          f"   ground truth (t_x/t_z, t_y/t_z) = "
+          f"({translation_gt[0] / translation_gt[2]:+.6f}, "
+          f"{translation_gt[1] / translation_gt[2]:+.6f})")
+    print(f"    gamma = {scene['gamma']:.6f}  ->  depth recovered by IPPE 1/gamma = "
+          f"{1.0 / scene['gamma']:.6f} m   (ground truth t_z = {translation_gt[2]:.6f} m)")
 
     print("\n[Step 6] Pose recovery: both IPPE-square candidates")
     for source, solutions in (

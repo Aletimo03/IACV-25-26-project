@@ -123,13 +123,11 @@ class ExperimentTests(unittest.TestCase):
             min_angle_deg=5.0,
             max_angle_deg=60.0,
             samples=5,
-            noise_std_px=0.5,
         )
         self.assertEqual(len(results), 5)
         self.assertTrue(
             all(result.candidate_rmse_px[0] <= result.candidate_rmse_px[1] for result in results)
         )
-        self.assertTrue(all(np.isfinite(result.condition_number) for result in results))
         with tempfile.TemporaryDirectory() as directory:
             plot_path = plot_viewpoint_sweep(results, Path(directory) / "sweep.png")
             self.assertTrue(plot_path.is_file())

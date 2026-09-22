@@ -68,7 +68,10 @@ Running it walks through the seven steps on the scene described by `config.py`
 and prints each intermediate quantity: the marker corners in metres, the
 intrinsics, the ground-truth rotation matrix, the marker normal in the camera
 frame, the viewing angle, the camera-frame coordinates and pixel of every
-corner, both candidate poses from both solvers, and a per-corner residual table.
+corner, the IPPE intermediates (the homography, the image of the square centre,
+and γ, whose inverse is the recovered depth), both candidate poses from both
+solvers, and a per-corner residual table. Each intermediate is printed next to
+the value the ground truth predicts for it.
 
 Notes on the implementation:
 
@@ -114,7 +117,7 @@ reprojection error and their error against the ground truth.
   `config.py` (0° and 0.5 m).
 - No noise is added — the image points are the exact projections.
 - Outputs: `outputs/exp1_sweep.png` and `outputs/exp1_sweep.csv`
-  (90 rows: angle, both RMSEs, both pose errors, and two conditioning columns).
+  (90 rows: angle, both RMSEs, both pose errors).
 - The report expects the plot as `figures/exp1_sweep.png` (ignored by Git,
   like `outputs/`). Upload it to Overleaf when you rerun the sweep.
 
@@ -137,9 +140,6 @@ report.
 
 Two things to know about the code:
 
-- `run_viewpoint_sweep` takes a `noise_std_px` argument but **does not add
-  noise**; it only passes the value to `analyze_jacobian` to fill the two
-  conditioning columns in the CSV.
 - The CSV has Windows-style (CRLF) line endings. That is Python's `csv` module
   default on every platform, not a bug; PyCharm warns about it if you try to
   commit the file.

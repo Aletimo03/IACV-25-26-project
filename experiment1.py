@@ -19,7 +19,7 @@ import config
 from geometry.camera import Camera, make_camera
 from geometry.marker import make_square_marker
 from ippe_square import ippe_square
-from jacobian import analyze_jacobian, so3_log
+from jacobian import so3_log
 from viewpoint import make_front_arc_pose, project_scene
 
 
@@ -43,9 +43,6 @@ class ViewpointResult:
     candidate_rmse_px: tuple[float, float]
     candidate_rotation_error_deg: tuple[float, float]
     candidate_translation_error_m: tuple[float, float]
-    singular_values: np.ndarray
-    smallest_singular_value: float
-    condition_number: float
 
 
 def run_viewpoint_sweep(
@@ -55,13 +52,11 @@ def run_viewpoint_sweep(
     min_angle_deg: float,
     max_angle_deg: float,
     samples: int,
-    noise_std_px: float,
     azimuth_deg: float = 0.0,
 ) -> list[ViewpointResult]:
     """Run the solver at every angle of the arc and keep both candidates.
 
-    ``noise_std_px`` is not added to the image points -- this sweep is exact.
-    It only sets the scale of the covariance in the conditioning columns.
+    The image points are the exact projections: this sweep adds no noise.
     """
     if samples < 2:
         raise ValueError("samples must be at least two")
@@ -79,18 +74,12 @@ def run_viewpoint_sweep(
             _pose_errors(rotation, translation, rotation_gt, translation_gt)
             for rotation, translation, _ in candidates
         )
-        diagnostics = analyze_jacobian(
-            camera, object_points, rotation_gt, translation_gt, noise_std_px
-        )
         results.append(
             ViewpointResult(
                 viewing_angle_deg=float(angle),
                 candidate_rmse_px=(float(candidates[0][2]), float(candidates[1][2])),
                 candidate_rotation_error_deg=(errors[0][0], errors[1][0]),
                 candidate_translation_error_m=(errors[0][1], errors[1][1]),
-                singular_values=diagnostics.singular_values,
-                smallest_singular_value=diagnostics.smallest_singular_value,
-                condition_number=diagnostics.condition_number,
             )
         )
     return results
@@ -138,8 +127,6 @@ def write_viewpoint_sweep_csv(results: list[ViewpointResult], output_path: str |
                 "candidate_2_rotation_error_deg",
                 "candidate_1_translation_error_m",
                 "candidate_2_translation_error_m",
-                "smallest_singular_value",
-                "condition_number",
             ]
         )
         for result in results:
@@ -149,8 +136,6 @@ def write_viewpoint_sweep_csv(results: list[ViewpointResult], output_path: str |
                     *result.candidate_rmse_px,
                     *result.candidate_rotation_error_deg,
                     *result.candidate_translation_error_m,
-                    result.smallest_singular_value,
-                    result.condition_number,
                 ]
             )
     return output
@@ -175,7 +160,6 @@ def main() -> None:
         config.SWEEP_MIN_ANGLE_DEG,
         config.SWEEP_MAX_ANGLE_DEG,
         config.SWEEP_SAMPLES,
-        config.CORNER_NOISE_STD_PX,
         config.SWEEP_AZIMUTH_DEG,
     )
     plot_path = plot_viewpoint_sweep(results, args.output_dir / "exp1_sweep.png")
