@@ -21,8 +21,8 @@ from geometry.camera import Camera, make_camera
 from geometry.marker import make_square_marker
 from ippe_square import ippe_square
 from jacobian import (
-    JacobianDiagnostics,
     analyze_jacobian,
+    gauss_newton,
     jacobian_svd,
     reprojection_jacobian,
     so3_log,
@@ -202,28 +202,55 @@ def describe_direction(direction: np.ndarray, terms: int = 2) -> str:
     return " ".join(f"{direction[i]:+.3f} {POSE_PARAMETERS[i]}" for i in order)
 
 
+def estimate_pose(
+    camera: Camera,
+    object_points: np.ndarray,
+    image_points: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The minimiser of E: Gauss-Newton from both IPPE candidates, keep the lower cost.
+
+    IPPE only provides the starting points, one in each of the two valleys of E
+    (the true pose and the mirror); Gauss-Newton finds the bottom of each.
+    """
+    _, _, _, info = ippe_square(camera, object_points, image_points)
+    refined = [
+        gauss_newton(camera, object_points, rotation, translation, image_points)
+        for rotation, translation, _ in info["solutions"]
+    ]
+    rotation, translation, _, _ = min(refined, key=lambda candidate: candidate[2])
+    return rotation, translation
+
+
 @dataclass(frozen=True)
 class MonteCarloSummary:
-    """Measured and predicted pose uncertainty at a single viewpoint."""
+    """Measured and predicted pose scatter at one viewpoint.
+
+    The statistics use the trials whose estimate stayed in the valley of the
+    true pose; trials that ended at the mirror pose are only counted, in
+    ``flips``, because the first-order prediction does not describe them.
+    Covariances are in SI units (metres, radians); the per-direction standard
+    deviations use the dimensionless convention of the conditioning sweep.
+    """
 
     viewing_angle_deg: float
     trials: int
     noise_std_px: float
+    flips: int
+    mean_error: np.ndarray
     empirical_covariance: np.ndarray
     predicted_covariance: np.ndarray
-    singular_values: np.ndarray
-    smallest_singular_value: float
-    condition_number: float
+    empirical_direction_std: np.ndarray
+    predicted_direction_std: np.ndarray
 
     @property
-    def empirical_variance(self) -> np.ndarray:
-        """Just the diagonal of the measured covariance."""
-        return np.diag(self.empirical_covariance)
+    def variance_ratio(self) -> np.ndarray:
+        """Measured over predicted variance, per pose parameter (1 means agreement)."""
+        return np.diag(self.empirical_covariance) / np.diag(self.predicted_covariance)
 
     @property
-    def predicted_variance(self) -> np.ndarray:
-        """Just the diagonal of the predicted covariance."""
-        return np.diag(self.predicted_covariance)
+    def std_ratio(self) -> np.ndarray:
+        """Measured over predicted standard deviation, per pose parameter."""
+        return np.sqrt(self.variance_ratio)
 
 
 def run_monte_carlo(
@@ -236,11 +263,12 @@ def run_monte_carlo(
     seed: int,
     azimuth_deg: float = 0.0,
 ) -> MonteCarloSummary:
-    """Re-solve the pose many times with fresh noise on the corners.
+    """Estimate the pose many times from noisy corners and compare with the prediction.
 
-    Each trial perturbs the eight image coordinates independently, solves, and
-    records the error as a local increment: translation straight up, rotation
-    through the log map, so both match the Jacobian's parametrisation.
+    Each trial adds independent Gaussian noise to the eight image coordinates and
+    re-estimates the pose as the minimiser of E (``estimate_pose``). The error is
+    recorded in the Jacobian's own coordinates: translation difference, and
+    rotation through the log map.
     """
     if trials < 2:
         raise ValueError("At least two trials are needed for an empirical variance")
@@ -249,28 +277,40 @@ def run_monte_carlo(
 
     rotation_gt, translation_gt = make_front_arc_pose(radius_m, viewing_angle_deg, azimuth_deg)
     image_points = project_scene(camera, object_points, rotation_gt, translation_gt)
-    diagnostics: JacobianDiagnostics = analyze_jacobian(
-        camera, object_points, rotation_gt, translation_gt, noise_std_px
-    )
+    # The mirror pose is IPPE's other candidate on exact data. Head-on it
+    # coincides with the true pose, and then there is no mirror to flip to.
+    _, _, _, exact = ippe_square(camera, object_points, image_points)
+    rotation_mirror = exact["solutions"][1][0]
+    has_mirror = np.linalg.norm(so3_log(rotation_gt.T @ rotation_mirror)) > 1e-6
+
+    diagnostics = analyze_jacobian(camera, object_points, rotation_gt, translation_gt, noise_std_px)
+    distance = float(np.linalg.norm(translation_gt))
+    scale = np.array([distance, distance, distance, 1.0, 1.0, 1.0])
+    singular_values, directions, _ = jacobian_svd(diagnostics.jacobian * scale)
+
     random = np.random.default_rng(seed)
-    local_errors = np.empty((trials, 6), dtype=np.float64)
+    errors = np.empty((trials, 6), dtype=np.float64)
+    in_true_valley = np.ones(trials, dtype=bool)
     for trial in range(trials):
         noisy_points = image_points + random.normal(0.0, noise_std_px, size=image_points.shape)
-        rotation_estimate, translation_estimate, _, _ = ippe_square(
-            camera, object_points, noisy_points
-        )
-        local_errors[trial, :3] = translation_estimate - translation_gt
-        local_errors[trial, 3:] = so3_log(rotation_gt.T @ rotation_estimate)
+        rotation, translation = estimate_pose(camera, object_points, noisy_points)
+        errors[trial, :3] = translation - translation_gt
+        errors[trial, 3:] = so3_log(rotation_gt.T @ rotation)
+        if has_mirror:
+            distance_to_mirror = np.linalg.norm(so3_log(rotation_mirror.T @ rotation))
+            in_true_valley[trial] = np.linalg.norm(errors[trial, 3:]) <= distance_to_mirror
 
+    kept = errors[in_true_valley]
     return MonteCarloSummary(
         viewing_angle_deg=viewing_angle_deg,
         trials=trials,
         noise_std_px=noise_std_px,
-        empirical_covariance=np.cov(local_errors, rowvar=False, ddof=1),
+        flips=int(trials - in_true_valley.sum()),
+        mean_error=kept.mean(axis=0),
+        empirical_covariance=np.cov(kept, rowvar=False, ddof=1),
         predicted_covariance=diagnostics.predicted_covariance,
-        singular_values=diagnostics.singular_values,
-        smallest_singular_value=diagnostics.smallest_singular_value,
-        condition_number=diagnostics.condition_number,
+        empirical_direction_std=((kept / scale) @ directions.T).std(axis=0, ddof=1),
+        predicted_direction_std=noise_std_px / singular_values,
     )
 
 
@@ -306,9 +346,8 @@ def run_monte_carlo_experiment(
     ]
 
 
-def plot_monte_carlo_comparison(
-    summaries: list[MonteCarloSummary], output_path: str | Path) -> Path:
-    """Bar chart per angle: measured variance next to predicted variance."""
+def plot_monte_carlo(summaries: list[MonteCarloSummary], output_path: str | Path) -> Path:
+    """Std ratios, scatter along the weakest direction, and mirror flips, against the angle."""
     if not summaries:
         raise ValueError("Cannot plot an empty Monte Carlo result")
     import matplotlib
@@ -318,36 +357,64 @@ def plot_monte_carlo_comparison(
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure, axes = plt.subplots(
-        1, len(summaries), figsize=(6.0 * len(summaries), 4.5), constrained_layout=True
-    )
-    if len(summaries) == 1:
-        axes = [axes]
+    angles = np.array([summary.viewing_angle_deg for summary in summaries])
+    ratios = np.array([summary.std_ratio for summary in summaries])
+    measured = np.rad2deg([summary.empirical_direction_std[-1] for summary in summaries])
+    predicted = np.rad2deg([summary.predicted_direction_std[-1] for summary in summaries])
+    flips = np.array([100.0 * summary.flips / summary.trials for summary in summaries])
+    # A standard deviation measured from n trials has relative standard
+    # deviation about 1/sqrt(2(n-1)); the band is two of those.
+    band = 2.0 / np.sqrt(2.0 * (summaries[0].trials - 1))
+
+    figure, axes = plt.subplots(3, 1, figsize=(7.5, 11.5), constrained_layout=True)
     labels = [r"$t_x$", r"$t_y$", r"$t_z$", r"$\omega_x$", r"$\omega_y$", r"$\omega_z$"]
-    positions = np.arange(6)
-    for axis, summary in zip(axes, summaries, strict=True):
-        empirical = np.maximum(summary.empirical_variance, np.finfo(float).tiny)
-        predicted = np.maximum(summary.predicted_variance, np.finfo(float).tiny)
-        axis.bar(positions - 0.2, empirical, width=0.4, label="empirical")
-        axis.bar(positions + 0.2, predicted, width=0.4, label="Jacobian prediction")
-        axis.set_yscale("log")
-        axis.set_xticks(positions, labels)
-        axis.set_ylabel("Variance (m² for t, rad² for ω)")
-        axis.set_title(
-            f"{summary.viewing_angle_deg:g}°: cond(J)={summary.condition_number:.2e}"
-        )
-        axis.grid(True, axis="y", alpha=0.3)
-        axis.legend()
+    axes[0].axhspan(1.0 - band, 1.0 + band, color="grey", alpha=0.2, label="statistical noise (±2σ)")
+    axes[0].axhline(1.0, color="black", linewidth=1.0)
+    # Markers only: each point is an independent simulation, so a line between
+    # them would make statistical scatter look like a trend.
+    for k in range(6):
+        axes[0].plot(angles, ratios[:, k], "o", markersize=4, label=labels[k])
+    axes[0].set_ylabel("measured / predicted std")
+    axes[0].set_title("Monte Carlo against the Jacobian prediction, per pose parameter")
+    axes[0].legend(ncol=4, fontsize="small", loc="upper center", bbox_to_anchor=(0.5, -0.2))
+
+    axes[1].plot(angles, predicted, color="black", label=r"predicted $\sigma_{px} / \sigma_6$")
+    axes[1].plot(angles, measured, "o", color="tab:red", markersize=4, label="measured (Monte Carlo)")
+    axes[1].set_ylabel("standard deviation (degrees)")
+    axes[1].set_title("Scatter along the least observable direction")
+    axes[1].legend(fontsize="small")
+
+    # Head-on the mirror coincides with the true pose, so flips are undefined at 0.
+    has_mirror = angles > 0.0
+    axes[2].plot(angles[has_mirror], flips[has_mirror], "o-", color="tab:purple")
+    axes[2].set_xlim(0.0, 15.0)
+    axes[2].set_xticks(np.arange(0, 16, 1))
+    axes[2].set_ylim(bottom=0.0)
+    axes[2].set_ylabel("% of trials")
+    axes[2].set_title("Trials where the mirror pose won (the wrong solution)")
+    axes[2].text(
+        0.98, 0.95,
+        "Zoom on 0-15 degrees: no flips occur above 8 degrees.\n"
+        "At 0 degrees the mirror coincides with the true pose.",
+        transform=axes[2].transAxes, fontsize="small", ha="right", va="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.9),
+    )
+
+    for axis in axes[:2]:
+        axis.set_xlim(-2.0, 90.0)
+        axis.set_xticks(np.arange(0, 91, 10))
+    for axis in axes:
+        axis.set_xlabel("Viewing angle from fronto-parallel (degrees)")
+        axis.grid(True, alpha=0.3)
     figure.savefig(output, dpi=160)
     plt.close(figure)
     return output
 
 
 def write_monte_carlo_csv(summaries: list[MonteCarloSummary], output_path: str | Path) -> Path:
-    """Same numbers as the plot, in CSV form."""
+    """Per angle: flips, std ratios, bias (SI), and scatter along each singular direction."""
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    names = ["tx", "ty", "tz", "omega_x", "omega_y", "omega_z"]
     with output.open("w", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(
@@ -355,10 +422,11 @@ def write_monte_carlo_csv(summaries: list[MonteCarloSummary], output_path: str |
                 "viewing_angle_deg",
                 "trials",
                 "noise_std_px",
-                "smallest_singular_value",
-                "condition_number",
-                *[f"empirical_var_{name}" for name in names],
-                *[f"predicted_var_{name}" for name in names],
+                "mirror_flips",
+                *[f"std_ratio_{name}" for name in POSE_PARAMETERS],
+                *[f"bias_{name}" for name in POSE_PARAMETERS],
+                *[f"measured_std_v{k}" for k in range(1, 7)],
+                *[f"predicted_std_v{k}" for k in range(1, 7)],
             ]
         )
         for summary in summaries:
@@ -367,10 +435,11 @@ def write_monte_carlo_csv(summaries: list[MonteCarloSummary], output_path: str |
                     summary.viewing_angle_deg,
                     summary.trials,
                     summary.noise_std_px,
-                    summary.smallest_singular_value,
-                    summary.condition_number,
-                    *summary.empirical_variance,
-                    *summary.predicted_variance,
+                    summary.flips,
+                    *summary.std_ratio,
+                    *summary.mean_error,
+                    *summary.empirical_direction_std,
+                    *summary.predicted_direction_std,
                 ]
             )
     return output
@@ -422,19 +491,21 @@ def main() -> None:
         config.MONTE_CARLO_SEED,
         config.SWEEP_AZIMUTH_DEG,
     )
-    plot_path = plot_monte_carlo_comparison(summaries, args.output_dir / "monte_carlo_variance.png")
-    csv_path = write_monte_carlo_csv(summaries, args.output_dir / "monte_carlo_summary.csv")
-    print("Experiment 2 --- Jacobian conditioning and Monte Carlo")
+    plot_path = plot_monte_carlo(summaries, args.output_dir / "exp2_montecarlo.png")
+    csv_path = write_monte_carlo_csv(summaries, args.output_dir / "exp2_montecarlo.csv")
+    print("Experiment 2 --- Monte Carlo against the Jacobian prediction")
     print(f"  wrote {plot_path}")
     print(f"  wrote {csv_path}")
+    print(f"  {config.MONTE_CARLO_TRIALS} trials per angle, noise {config.CORNER_NOISE_STD_PX} px, "
+          "pose = minimiser of E (Gauss-Newton from both IPPE candidates)")
+    print("  angle   mirror flips   worst |std ratio - 1|   weakest direction: predicted vs measured (deg)")
     for summary in summaries:
         print(
-            f"  {summary.viewing_angle_deg:g}°: sigma_min={summary.smallest_singular_value:.6g}, "
-            f"cond(J)={summary.condition_number:.6g}"
+            f"  {summary.viewing_angle_deg:4.1f}°  {summary.flips:6d}         "
+            f"{np.max(np.abs(summary.std_ratio - 1.0)):8.3f}              "
+            f"{np.rad2deg(summary.predicted_direction_std[-1]):.3f} vs "
+            f"{np.rad2deg(summary.empirical_direction_std[-1]):.3f}"
         )
-        print("    empirical variance:", np.array2string(summary.empirical_variance, precision=4))
-        print("    predicted variance:", np.array2string(summary.predicted_variance, precision=4))
-
 
 if __name__ == "__main__":
     main()

@@ -167,3 +167,30 @@ def analyze_jacobian(
         condition_number=condition,
         predicted_covariance=covariance,
     )
+
+
+def gauss_newton(
+    camera: Camera,
+    object_points: np.ndarray,
+    rotation: np.ndarray,
+    translation: np.ndarray,
+    image_points: np.ndarray,
+    max_iterations: int = 50,
+    tolerance: float = 1e-10,
+) -> tuple[np.ndarray, np.ndarray, float, int]:
+    """Minimise the reprojection cost E = ||e||^2 starting from the given pose.
+
+    Each iteration linearises the residuals, e(theta + d) ~ e + J d, solves the
+    linear least-squares problem for the step d, and applies it with
+    ``perturb_pose``. Returns the refined pose, its cost E and the number of
+    iterations used.
+    """
+    for iteration in range(1, max_iterations + 1):
+        residuals = reprojection_residuals(camera, object_points, rotation, translation, image_points)
+        jacobian = reprojection_jacobian(camera, object_points, rotation, translation)
+        step, *_ = np.linalg.lstsq(jacobian, -residuals, rcond=None)
+        rotation, translation = perturb_pose(rotation, translation, step)
+        if np.linalg.norm(step) < tolerance:
+            break
+    residuals = reprojection_residuals(camera, object_points, rotation, translation, image_points)
+    return rotation, translation, float(residuals @ residuals), iteration

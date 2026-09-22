@@ -13,8 +13,15 @@ from geometry.marker import make_square_marker, transform_points
 from experiment1 import plot_viewpoint_sweep, run_viewpoint_sweep
 from experiment2 import run_conditioning_sweep, run_monte_carlo
 from ippe_square import ippe_square
-from jacobian import analyze_jacobian, perturb_pose, reprojection_jacobian, reprojection_residuals
+from jacobian import (
+    analyze_jacobian,
+    gauss_newton,
+    perturb_pose,
+    reprojection_jacobian,
+    reprojection_residuals,
+)
 from pipeline import generate_scene, make_ground_truth_pose, pose_error, validate_noiseless_scene
+from viewpoint import make_front_arc_pose, project_scene
 
 
 class SyntheticIPPEGeometryTests(unittest.TestCase):
@@ -175,8 +182,33 @@ class ExperimentTests(unittest.TestCase):
         np.testing.assert_allclose(first.empirical_covariance, second.empirical_covariance)
         self.assertEqual(first.empirical_covariance.shape, (6, 6))
         self.assertEqual(first.predicted_covariance.shape, (6, 6))
-        self.assertTrue(np.all(first.empirical_variance >= 0.0))
-        self.assertTrue(np.all(first.predicted_variance >= 0.0))
+        self.assertTrue(np.all(first.variance_ratio > 0.0))
+
+    def test_gauss_newton_recovers_the_exact_pose(self) -> None:
+        camera, object_points = make_camera(), make_square_marker()
+        rotation, translation = make_front_arc_pose(0.5, 30.0)
+        image_points = project_scene(camera, object_points, rotation, translation)
+        start_rotation, start_translation = perturb_pose(
+            rotation, translation, np.array([0.01, -0.01, 0.02, 0.05, -0.04, 0.03])
+        )
+        refined_rotation, refined_translation, cost, _ = gauss_newton(
+            camera, object_points, start_rotation, start_translation, image_points
+        )
+        self.assertLess(cost, 1e-20)
+        np.testing.assert_allclose(refined_rotation, rotation, atol=1e-12)
+        np.testing.assert_allclose(refined_translation, translation, atol=1e-12)
+
+    def test_monte_carlo_agrees_with_the_jacobian_prediction(self) -> None:
+        # With the minimiser of E, measured and predicted variances agree; 400
+        # trials leave about +-14% of statistical noise (2 sigma), so 25% is safe.
+        summary = run_monte_carlo(
+            make_camera(), make_square_marker(), 0.5, 30.0, 0.5, trials=400, seed=7
+        )
+        self.assertEqual(summary.flips, 0)
+        self.assertTrue(np.all(np.abs(summary.variance_ratio - 1.0) < 0.25), summary.variance_ratio)
+        np.testing.assert_allclose(
+            summary.empirical_direction_std, summary.predicted_direction_std, rtol=0.25
+        )
 
 
 if __name__ == "__main__":

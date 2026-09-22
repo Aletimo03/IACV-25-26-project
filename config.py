@@ -62,8 +62,11 @@ SWEEP_AZIMUTH_DEG = 0.0
 # ──────────────────────────────────────────────────────────────────────────
 
 CORNER_NOISE_STD_PX = 0.5
-MONTE_CARLO_VIEWING_ANGLES_DEG = (5.0, 60.0)
-MONTE_CARLO_TRIALS = 1000
+# Dense near head-on, where the mirror pose can win, then every 5 degrees.
+MONTE_CARLO_VIEWING_ANGLES_DEG = (0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0) + tuple(
+    float(angle) for angle in range(10, 90, 5)
+)
+MONTE_CARLO_TRIALS = 2500
 MONTE_CARLO_SEED = 20260804
 
 
