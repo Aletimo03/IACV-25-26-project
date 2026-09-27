@@ -112,7 +112,7 @@
 \vspace{0.4cm}
 {\color{greytext} Mathematical foundations, implementation, and synthetic experiments}
 \vfill
-{\color{greytext}\large Author names\par}
+{\color{greytext}\large Alessio Timofte\\Anthony Iemmolo\\Matteo Bianchi\par}
 \vfill
 {\color{greytext} September 2026}
 \end{titlepage}
@@ -695,23 +695,9 @@ its root mean square,
   \label{eq:rmse}
 \end{equation}
 
-\paragraph{Why not just $E$?} The two carry the same information, since
-$\mathrm{RMSE}=\sqrt{E/2N}$ is a monotone function of $E$, but they are not
-equally readable. The cost $E$ is measured in squared pixels and grows with the
-number of corners, so a value of $89$ says nothing on its own. Taking the mean
-and then the square root undoes both effects: the result is in \emph{pixels},
-it does not depend on how many points were used, and it answers a concrete
-question --- \emph{if this pose were the true one, by how many pixels would a
-corner coordinate be misplaced?} That also makes it directly comparable with
-the corner noise $\sigma_{px}$, which is the comparison the discussion below
-rests on. A perfect pose gives zero either way.
-
-\begin{remark}
-The normalization is by $2N$, the number of scalar residuals, not by $N$, the
-number of corners. This is the convention OpenCV reports, so our numbers and
-its own are directly comparable; an RMSE of Euclidean per-corner distances
-would be a factor $\sqrt2$ larger.
-\end{remark}
+\paragraph{Rationale behind $\mathrm{RMSE}$:} Both indexes carry the same information, since
+$\mathrm{RMSE}=\sqrt{E/2N}$ is a monotone function of $E$, but the former improves significantly the readability and has been preferred in the literature. This is the convention OpenCV reports, so our numbers and its own are directly comparable.\\
+The normalization factor of $2N$, the number of scalar residuals, removes the dependency from the number of corners $N$ and taking the square root provides a result in \emph{pixels}, that also makes it directly comparable with the corner noise $\sigma_{px}$.
 
 % ------------------------------------------------------------
 \subsection{Setup}
@@ -1268,7 +1254,6 @@ $1^\circ$, $2^\circ$, \dots, $8^\circ$, where the mirror can win, and every
 $5^\circ$ from $10^\circ$ to $85^\circ$.
 
 \subsubsection{Results}
-
 \resultfigure{exp2_montecarlo.png}
  {Measured against predicted scatter per parameter, scatter along the weakest direction, and mirror flips against the viewing angle.}
  {Monte Carlo validation, $2500$ trials per angle, $\sigma_{px} = 0.5$~px.
